@@ -1,0 +1,264 @@
+# =====================================================================
+# Tiles ERP — fully containerised development stack.
+#
+# Everything runs in Docker: Postgres, Redis, MailHog, the API, the worker,
+# the shared-package watcher and all three PWAs. Nothing needs Node, pnpm or
+# Prisma installed on your machine — only Docker.
+#
+#   docker compose -f docker/docker-compose.dev.yml up          # start
+#   docker compose -f docker/docker-compose.dev.yml up --build  # after Dockerfile edits
+#   docker compose -f docker/docker-compose.dev.yml down        # stop
+#
+# Or via pnpm-free shortcuts:  npm run dev:docker  (see package.json)
+#
+# How the source is wired:
+#   * The repository is bind-mounted at /repo, so saving a file on Windows is
+#     picked up by the watchers inside the containers.
+#   * Every node_modules directory is a NAMED VOLUME layered on top of that
+#     bind mount. This is deliberate: dependencies installed on Windows contain
+#     Windows binaries (esbuild, Prisma engines) that cannot execute on Linux.
+#     Keeping them separate means the host's node_modules and the container's
+#     never collide, and you can keep running `pnpm dev` natively if you want.
+# =====================================================================
+
+name: tiles-erp-dev
+
+# ---------------------------------------------------------------------
+# Shared fragments
+# ---------------------------------------------------------------------
+
+# The repo bind mount plus one volume per node_modules directory. pnpm creates
+# a node_modules folder in every workspace package, so each needs its own.
+x-source-mounts: &source-mounts
+  - ..:/repo
+  - pnpm_store:/pnpm/store
+  - repo_node_modules:/repo/node_modules
+  - api_node_modules:/repo/apps/api/node_modules
+  - worker_node_modules:/repo/apps/worker/node_modules
+  - admin_node_modules:/repo/apps/admin-pwa/node_modules
+  - supplier_node_modules:/repo/apps/supplier-pwa/node_modules
+  - customer_node_modules:/repo/apps/customer-pwa/node_modules
+  - shared_types_node_modules:/repo/packages/shared-types/node_modules
+  - config_node_modules:/repo/packages/config/node_modules
+  - validation_node_modules:/repo/packages/validation/node_modules
+  - shared_node_modules:/repo/packages/shared/node_modules
+  - hooks_node_modules:/repo/packages/hooks/node_modules
+  - ui_node_modules:/repo/packages/ui/node_modules
+  - sixorbit_node_modules:/repo/packages/sixorbit/node_modules
+
+x-build: &dev-build
+  context: ..
+  dockerfile: docker/dev.Dockerfile
+
+# Backend environment: service names resolve on the compose network.
+x-backend-env: &backend-env
+  NODE_ENV: development
+  DATABASE_URL: postgresql://tileserp:tileserp_password@postgres:5432/tileserp?schema=public
+  REDIS_HOST: redis
+  REDIS_PORT: '6379'
+  SMTP_HOST: mailhog
+  SMTP_PORT: '1025'
+  SMTP_SECURE: 'false'
+  SMTP_FROM: 'Tiles ERP Dev <no-reply@tileserp.local>'
+  # Dev-only values. The env schema requires at least 16 characters.
+  JWT_ACCESS_SECRET: dev_access_secret_not_for_production
+  JWT_REFRESH_SECRET: dev_refresh_secret_not_for_production
+  # Must decode to EXACTLY 32 bytes — the validator checks the decoded length,
+  # not the string length. This is base64 of "tiles-erp-dev-key-not-for-prod!!".
+  # Generate a real one for production with: openssl rand -base64 32
+  SIXORBIT_ENC_KEY: dGlsZXMtZXJwLWRldi1rZXktbm90LWZvci1wcm9kISE=
+
+services:
+  # -------------------------------------------------------------------
+  # Infrastructure
+  # -------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tileserp
+      POSTGRES_PASSWORD: tileserp_password
+      POSTGRES_DB: tileserp
+    ports:
+      - '5432:5432' # published so you can attach pgAdmin / DBeaver from Windows
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tileserp']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - '1025:1025' # SMTP
+      - '8025:8025' # web UI — http://localhost:8025
+
+  # -------------------------------------------------------------------
+  # One-shot setup: install dependencies, generate Prisma, build packages.
+  # Every app waits for this to exit 0.
+  # -------------------------------------------------------------------
+  install:
+    build: *dev-build
+    restart: 'no'
+    volumes: *source-mounts
+    working_dir: /repo
+    command: ['sh', '/repo/docker/dev-install.sh']
+
+  # -------------------------------------------------------------------
+  # One-shot: apply migrations and seed the database.
+  # -------------------------------------------------------------------
+  migrate:
+    build: *dev-build
+    restart: 'no'
+    depends_on:
+      postgres: { condition: service_healthy }
+      install: { condition: service_completed_successfully }
+    volumes: *source-mounts
+    working_dir: /repo/apps/api
+    environment:
+      <<: *backend-env
+      RUN_SEED: ${RUN_SEED:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@tileserp.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMe123}
+    # Shares the production entrypoint, which polls the database until it actually
+    # accepts queries before migrating. `depends_on: service_healthy` is not enough:
+    # postgres runs `pg_isready` against its unix socket, which succeeds during
+    # initdb while TCP on 5432 is still closed — exactly the window this container
+    # was starting in, hence "P1001: Can't reach database server".
+    command: ['sh', '/repo/docker/migrate-entrypoint.sh']
+
+  # -------------------------------------------------------------------
+  # Rebuilds packages/* on change, so edits to shared code reach the apps.
+  # -------------------------------------------------------------------
+  packages:
+    build: *dev-build
+    restart: unless-stopped
+    depends_on:
+      install: { condition: service_completed_successfully }
+    volumes: *source-mounts
+    working_dir: /repo
+    command: ['pnpm', '--filter', './packages/*', '--parallel', 'dev']
+
+  # -------------------------------------------------------------------
+  # Application services
+  # -------------------------------------------------------------------
+  api:
+    build: *dev-build
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      packages: { condition: service_started }
+    volumes: *source-mounts
+    working_dir: /repo/apps/api
+    environment:
+      <<: *backend-env
+      API_PORT: '3000'
+      API_GLOBAL_PREFIX: api
+      # "lan" also allows the Vite dev servers on 5173-5175.
+      API_CORS_ORIGINS: lan
+      SWAGGER_ENABLED: 'true'
+      UPLOAD_DIR: /repo/apps/api/uploads
+    ports:
+      - '3000:3000'
+    command: ['sh', '/repo/docker/wait-for-packages.sh', 'pnpm', 'exec', 'nest', 'start', '--watch']
+
+  worker:
+    build: *dev-build
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      packages: { condition: service_started }
+    volumes: *source-mounts
+    working_dir: /repo/apps/worker
+    environment:
+      <<: *backend-env
+      WORKER_CONCURRENCY: '5'
+    command: ['sh', '/repo/docker/wait-for-packages.sh', 'pnpm', 'exec', 'nest', 'start', '--watch']
+
+  admin-pwa:
+    build: *dev-build
+    restart: unless-stopped
+    depends_on:
+      install: { condition: service_completed_successfully }
+      packages: { condition: service_started }
+    volumes: *source-mounts
+    working_dir: /repo/apps/admin-pwa
+    environment:
+      VITE_APP_ENV: development
+      # Blank: the app derives http://<host>:3000/api, which is where the API
+      # container is published. Works from your PC and from a phone on the LAN.
+      VITE_API_URL: ''
+      VITE_API_PORT: '3000'
+    ports:
+      - '5173:5173'
+    command: ['sh', '/repo/docker/wait-for-packages.sh', 'pnpm', 'exec', 'vite', '--host', '0.0.0.0', '--port', '5173']
+
+  supplier-pwa:
+    build: *dev-build
+    restart: unless-stopped
+    depends_on:
+      install: { condition: service_completed_successfully }
+      packages: { condition: service_started }
+    volumes: *source-mounts
+    working_dir: /repo/apps/supplier-pwa
+    environment:
+      VITE_APP_ENV: development
+      VITE_API_URL: ''
+      VITE_API_PORT: '3000'
+    ports:
+      - '5174:5174'
+    command: ['sh', '/repo/docker/wait-for-packages.sh', 'pnpm', 'exec', 'vite', '--host', '0.0.0.0', '--port', '5174']
+
+  customer-pwa:
+    build: *dev-build
+    restart: unless-stopped
+    depends_on:
+      install: { condition: service_completed_successfully }
+      packages: { condition: service_started }
+    volumes: *source-mounts
+    working_dir: /repo/apps/customer-pwa
+    environment:
+      VITE_APP_ENV: development
+      VITE_API_URL: ''
+      VITE_API_PORT: '3000'
+    ports:
+      - '5175:5175'
+    command: ['sh', '/repo/docker/wait-for-packages.sh', 'pnpm', 'exec', 'vite', '--host', '0.0.0.0', '--port', '5175']
+
+volumes:
+  postgres_data:
+  redis_data:
+  pnpm_store:
+  repo_node_modules:
+  api_node_modules:
+  worker_node_modules:
+  admin_node_modules:
+  supplier_node_modules:
+  customer_node_modules:
+  shared_types_node_modules:
+  config_node_modules:
+  validation_node_modules:
+  shared_node_modules:
+  hooks_node_modules:
+  ui_node_modules:
+  sixorbit_node_modules:

@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/build
+**/.turbo
+**/coverage
+**/dev-dist
+**/.env
+**/.env.local
+.env.production
+docker/backups
+.git
+docs

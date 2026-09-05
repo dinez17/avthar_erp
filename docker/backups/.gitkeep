@@ -1,0 +1,3 @@
+# Database dumps from scripts/backup-db.sh land here.
+# Bind-mounted into the postgres container at /backups.
+# The dumps themselves are gitignored.

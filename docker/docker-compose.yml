@@ -1,0 +1,143 @@
+# =====================================================================
+# Tiles ERP - full stack for local development / staging.
+# Run from the repository root:  docker compose -f docker/docker-compose.yml up -d
+# =====================================================================
+name: tiles-erp
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tileserp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tileserp_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tileserp}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-tileserp}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tileserp}:${POSTGRES_PASSWORD:-tileserp_password}@postgres:5432/${POSTGRES_DB:-tileserp}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      API_PORT: '3000'
+      API_GLOBAL_PREFIX: api
+      # Same-origin behind the gateway; 'lan' also covers local network testing.
+      API_CORS_ORIGINS: lan
+      SWAGGER_ENABLED: 'true'
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access_secret_at_least_16}
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh_secret_at_least_16}
+      JWT_REFRESH_EXPIRES_IN: 7d
+      SMTP_HOST: mailhog
+      SMTP_PORT: '1025'
+      SMTP_SECURE: 'false'
+      SMTP_FROM: 'Tiles ERP <no-reply@tileserp.local>'
+      UPLOAD_DIR: /app/uploads
+      UPLOAD_MAX_FILE_SIZE: '10485760'
+    expose:
+      - '3000'
+    volumes:
+      - api_uploads:/app/uploads
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tileserp}:${POSTGRES_PASSWORD:-tileserp_password}@postgres:5432/${POSTGRES_DB:-tileserp}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      WORKER_CONCURRENCY: '5'
+      SMTP_HOST: mailhog
+      SMTP_PORT: '1025'
+      SMTP_SECURE: 'false'
+      SMTP_FROM: 'Tiles ERP <no-reply@tileserp.local>'
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access_secret_at_least_16}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh_secret_at_least_16}
+
+  admin-pwa:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args: { APP: admin-pwa }
+    restart: unless-stopped
+    expose:
+      - '80'
+
+  supplier-pwa:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args: { APP: supplier-pwa }
+    restart: unless-stopped
+    expose:
+      - '80'
+
+  customer-pwa:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args: { APP: customer-pwa }
+    restart: unless-stopped
+    expose:
+      - '80'
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - admin-pwa
+      - supplier-pwa
+      - customer-pwa
+    ports:
+      - '80:80'
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_uploads:

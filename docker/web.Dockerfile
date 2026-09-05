@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+# Builds any PWA (admin-pwa | supplier-pwa | customer-pwa) and serves it via nginx.
+ARG APP=admin-pwa
+FROM node:20-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /repo
+
+FROM base AS build
+ARG APP
+# Vite inlines VITE_* at build time, so these must be present here, not at runtime.
+# VITE_API_URL is normally left empty in production: the app then derives
+# `${origin}/api`, which is correct behind the gateway on 443 for every domain.
+ARG VITE_API_URL=""
+ARG VITE_APP_ENV="production"
+ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_APP_ENV=${VITE_APP_ENV}
+# Cap the heap so a small VPS swaps instead of getting the build OOM-killed.
+# Node's default on a 4 GB box is ~2 GB, which Vite + AG Grid + MUI can exceed.
+ARG NODE_MAX_OLD_SPACE=2048
+ENV NODE_OPTIONS=--max-old-space-size=${NODE_MAX_OLD_SPACE}
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/${APP}/package.json ./apps/${APP}/package.json
+RUN pnpm install --frozen-lockfile=false
+COPY packages ./packages
+COPY apps/${APP} ./apps/${APP}
+RUN pnpm --filter "@tiles-erp/shared-types" --filter "@tiles-erp/config" \
+        --filter "@tiles-erp/validation" --filter "@tiles-erp/hooks" \
+        --filter "@tiles-erp/ui" build \
+ && pnpm --filter "@tiles-erp/${APP}" build
+
+FROM nginx:1.27-alpine AS runtime
+ARG APP
+COPY docker/nginx/spa.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /repo/apps/${APP}/dist /usr/share/nginx/html
+EXPOSE 80

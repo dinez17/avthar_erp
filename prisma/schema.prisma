@@ -1,0 +1,3143 @@
+// =====================================================================
+// Tiles ERP - Prisma schema (foundation)
+// Conventions: UUID primary keys, audit columns, soft delete, optimistic
+// concurrency (version). Business modules extend this schema incrementally.
+// =====================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------
+// Identity & Access
+// ---------------------------------------------------------------------
+
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  email        String  @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  isActive     Boolean @default(true)
+
+  roles          UserRole[]
+  branches       UserBranch[]
+  departments    UserDepartment[]
+  /// Portal logins linking this user to a supplier or customer they may act for
+  portalAccounts PortalAccount[]
+
+  // Audit
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  isSystem    Boolean @default(false)
+  /// Users holding this role appear in salesman pickers
+  isSalesRole Boolean @default(false)
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique
+  description String?
+
+  roles RolePermission[]
+
+  createdAt DateTime @default(now())
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------
+// Company hierarchy: Company -> Branch -> Godown -> Gate -> Rack
+// ---------------------------------------------------------------------
+
+model Company {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String
+  legalName    String?
+  gstin        String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  stateCode    String?
+  pincode      String?
+  phone        String?
+  email        String?
+  isActive     Boolean @default(true)
+
+  branches Branch[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@map("companies")
+}
+
+model Branch {
+  id           String  @id @default(uuid()) @db.Uuid
+  companyId    String  @db.Uuid
+  name         String
+  code         String  @unique
+  gstin        String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  stateCode    String?
+  pincode      String?
+  phone        String?
+  email        String?
+  isActive     Boolean @default(true)
+
+  company           Company               @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  godowns           Godown[]
+  users             UserBranch[]
+  productPrices     ProductBranchPrice[]
+  stockMovements    StockMovement[]
+  stockBalances     StockBalance[]
+  purchaseOrders    PurchaseOrder[]
+  goodsReceipts     GoodsReceipt[]
+  purchaseInvoices  PurchaseInvoice[]
+  purchaseReturns   PurchaseReturn[]
+  quotations        Quotation[]
+  salesOrders       SalesOrder[]
+  salesInvoices     SalesInvoice[]
+  customerReceipts  CustomerReceipt[]
+  supplierPayments  SupplierPayment[]
+  numberSeries      NumberSeriesSetting[]
+  ledgerAccounts    LedgerAccount[]
+  cashEntries       CashEntry[]
+  cashCounts        CashCount[]
+  creditApprovals   CreditApproval[]
+  gatePasses        GatePass[]
+  inboundGatePasses GatePass[]            @relation("GatePassToBranch")
+  cashHandovers     DriverCashHandover[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([companyId])
+  @@map("branches")
+}
+
+model Godown {
+  id       String  @id @default(uuid()) @db.Uuid
+  branchId String  @db.Uuid
+  name     String
+  code     String
+  isActive Boolean @default(true)
+
+  branch          Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  gates           Gate[]
+  stockMovements  StockMovement[]
+  stockBalances   StockBalance[]
+  goodsReceipts   GoodsReceipt[]
+  purchaseReturns PurchaseReturn[]
+  gatePassLines   GatePassLine[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@unique([branchId, code])
+  @@map("godowns")
+}
+
+model Gate {
+  id       String  @id @default(uuid()) @db.Uuid
+  godownId String  @db.Uuid
+  name     String
+  code     String
+  isActive Boolean @default(true)
+
+  godown         Godown          @relation(fields: [godownId], references: [id], onDelete: Restrict)
+  racks          Rack[]
+  stockMovements StockMovement[]
+  gatePasses     GatePass[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@unique([godownId, code])
+  @@map("gates")
+}
+
+model Rack {
+  id       String  @id @default(uuid()) @db.Uuid
+  gateId   String  @db.Uuid
+  name     String
+  code     String
+  isActive Boolean @default(true)
+
+  gate Gate @relation(fields: [gateId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@unique([gateId, code])
+  @@map("racks")
+}
+
+model Department {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  users UserDepartment[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@map("departments")
+}
+
+model UserBranch {
+  userId   String @db.Uuid
+  branchId String @db.Uuid
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+  @@map("user_branches")
+}
+
+model UserDepartment {
+  userId       String @db.Uuid
+  departmentId String @db.Uuid
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, departmentId])
+  @@map("user_departments")
+}
+
+// ---------------------------------------------------------------------
+// Catalog masters: Category, Brand, Series (per brand), Collection (per brand)
+// ---------------------------------------------------------------------
+
+model Category {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  code        String?
+  /// Their `category_id`. Set by the SixOrbit import; null for categories we invented.
+  sixorbitId  String? @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  products Product[]
+
+  @@index([deletedAt])
+  @@map("categories")
+}
+
+model Brand {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  code        String?
+  /// Their `brand_id`. Set by the SixOrbit import; null for brands we invented.
+  sixorbitId  String? @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  /// The supplier for this brand; every product under the brand is supplied by them
+  supplierId String?   @db.Uuid
+  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  series      Series[]
+  collections Collection[]
+  products    Product[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@index([supplierId])
+  @@map("brands")
+}
+
+model Series {
+  id          String  @id @default(uuid()) @db.Uuid
+  brandId     String  @db.Uuid
+  name        String
+  code        String?
+  description String?
+  isActive    Boolean @default(true)
+
+  brand    Brand     @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  products Product[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@unique([brandId, name])
+  @@index([brandId])
+  @@map("series")
+}
+
+model Collection {
+  id          String  @id @default(uuid()) @db.Uuid
+  brandId     String  @db.Uuid
+  name        String
+  code        String?
+  description String?
+  isActive    Boolean @default(true)
+
+  brand    Brand     @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  products Product[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@unique([brandId, name])
+  @@index([brandId])
+  @@map("collections")
+}
+
+// ---------------------------------------------------------------------
+// Product master
+// ---------------------------------------------------------------------
+
+enum ProductUom {
+  BOX
+  PIECE
+  SQFT
+}
+
+model Product {
+  id          String  @id @default(uuid()) @db.Uuid
+  sku         String  @unique
+  name        String
+  description String?
+
+  categoryId   String  @db.Uuid
+  brandId      String  @db.Uuid
+  seriesId     String? @db.Uuid
+  collectionId String? @db.Uuid
+
+  /// e.g. "600x600" (millimetres)
+  sizeMm       String?
+  piecesPerBox Int
+  sqftPerBox   Decimal    @db.Decimal(10, 4)
+  baseUom      ProductUom @default(BOX)
+
+  hsnCode     String
+  gstRate     Decimal  @db.Decimal(5, 2)
+  mrp         Decimal? @db.Decimal(12, 2)
+  sellingRate Decimal? @db.Decimal(12, 2)
+
+  /// Per-box purchase economics; landingCost is derived and persisted for querying
+  /// Stock at or below this level is flagged in the low-stock report
+  reorderLevelBoxes Decimal? @db.Decimal(14, 3)
+
+  purchaseRate   Decimal? @db.Decimal(12, 2)
+  transportRate  Decimal  @default(0) @db.Decimal(12, 2)
+  additionalRate Decimal  @default(0) @db.Decimal(12, 2)
+  landingCost    Decimal? @db.Decimal(12, 2)
+  barcode        String?  @unique
+
+  isActive Boolean @default(true)
+
+  /// Their `isvid`. The anchor for every later push and pull.
+  sixorbitId         String?           @unique
+  /// Their `variation_number` — the code their own users read on a document.
+  sixorbitNumber     String?
+  sixorbitSyncStatus ProductSyncStatus @default(NOT_SYNCED)
+  sixorbitSyncedAt   DateTime?
+  sixorbitSyncError  String?
+  /// What the mapper objected to on the last import: a suspect area, a cost that cannot
+  /// be right. Kept as a list so the worklist can be filtered by the kind of problem.
+  sixorbitWarnings   String[]
+  /// The variation exactly as they sent it. Their payload carries ninety-odd fields and
+  /// we map a dozen; keeping the rest means a later sprint never has to re-import to get
+  /// at one of them.
+  sixorbitRaw        Json?
+
+  sixorbitAttributes SixOrbitProductAttribute[]
+
+  branchPrices         ProductBranchPrice[]
+  stockMovements       StockMovement[]
+  stockBalances        StockBalance[]
+  transferLines        StockTransferLine[]
+  purchaseOrderLines   PurchaseOrderLine[]
+  goodsReceiptLines    GoodsReceiptLine[]
+  purchaseInvoiceLines PurchaseInvoiceLine[]
+  purchaseReturnLines  PurchaseReturnLine[]
+  quotationLines       QuotationLine[]
+  salesOrderLines      SalesOrderLine[]
+  salesInvoiceLines    SalesInvoiceLine[]
+  stockReservations    StockReservation[]
+  supplierRates        SupplierProductRate[]
+  gatePassLines        GatePassLine[]
+
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  brand      Brand       @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  series     Series?     @relation(fields: [seriesId], references: [id], onDelete: Restrict)
+  collection Collection? @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([deletedAt])
+  @@map("products")
+}
+
+/// Branch-specific selling prices for a product (per box).
+model ProductBranchPrice {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @db.Uuid
+  branchId  String @db.Uuid
+
+  /// Price shown to customers before negotiation
+  displayPrice    Decimal @db.Decimal(12, 2)
+  /// Floor below which staff may not sell
+  minSellingPrice Decimal @db.Decimal(12, 2)
+  /// Default price applied on new orders
+  sellingPrice    Decimal @db.Decimal(12, 2)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+  updatedAt DateTime @updatedAt
+  updatedBy String?  @db.Uuid
+  version   Int      @default(1)
+
+  @@unique([productId, branchId])
+  @@index([branchId])
+  @@map("product_branch_prices")
+}
+
+// ---------------------------------------------------------------------
+// Trading parties: Customers and Suppliers
+// ---------------------------------------------------------------------
+
+enum CustomerType {
+  RETAIL
+  WHOLESALE
+  DEALER
+  PROJECT
+}
+
+model Customer {
+  id   String       @id @default(uuid()) @db.Uuid
+  code String       @unique
+  name String
+  type CustomerType @default(RETAIL)
+
+  gstin     String?
+  panNumber String?
+
+  contactPerson String?
+  phone         String?
+  altPhone      String?
+  email         String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  stateCode    String?
+  pincode      String?
+
+  /// Credit terms
+  quotations        Quotation[]
+  salesOrders       SalesOrder[]
+  salesInvoices     SalesInvoice[]
+  receipts          CustomerReceipt[]
+  gatePasses        GatePass[]
+  gatePassDocuments GatePassDocument[]
+
+  creditDays     Int     @default(0)
+  creditLimit    Decimal @default(0) @db.Decimal(14, 2)
+  openingBalance Decimal @default(0) @db.Decimal(14, 2)
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  creditApprovals CreditApproval[]
+  portalAccounts  PortalAccount[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@index([phone])
+  @@map("customers")
+}
+
+model Supplier {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique
+  name String
+
+  gstin     String?
+  panNumber String?
+
+  contactPerson String?
+  phone         String?
+  altPhone      String?
+  email         String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  stateCode    String?
+  pincode      String?
+
+  /// Payment terms offered by this supplier
+  paymentTermDays Int     @default(0)
+  openingBalance  Decimal @default(0) @db.Decimal(14, 2)
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  purchaseOrders   PurchaseOrder[]
+  goodsReceipts    GoodsReceipt[]
+  purchaseInvoices PurchaseInvoice[]
+  purchaseReturns  PurchaseReturn[]
+  productRates     SupplierProductRate[]
+  payments         SupplierPayment[]
+  portalAccounts   PortalAccount[]
+  /// Brands this supplier supplies; their products make up the supplier's catalogue
+  brands           Brand[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@map("suppliers")
+}
+
+// ---------------------------------------------------------------------
+// Logistics masters: Transporter, Vehicle, Driver
+// ---------------------------------------------------------------------
+
+enum VehicleType {
+  TRUCK
+  TEMPO
+  TRAILER
+  PICKUP
+  CONTAINER
+}
+
+enum VehicleOwnership {
+  OWNED
+  HIRED
+}
+
+model Transporter {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique
+  name String
+
+  gstin         String?
+  contactPerson String?
+  phone         String?
+  email         String?
+  addressLine1  String?
+  city          String?
+  state         String?
+  stateCode     String?
+  pincode       String?
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  vehicles       Vehicle[]
+  drivers        Driver[]
+  gatePasses     GatePass[]
+  stockTransfers StockTransfer[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@map("transporters")
+}
+
+model Vehicle {
+  id            String           @id @default(uuid()) @db.Uuid
+  /// Registration number, e.g. TN01AB1234
+  number        String           @unique
+  type          VehicleType      @default(TRUCK)
+  ownership     VehicleOwnership @default(OWNED)
+  transporterId String?          @db.Uuid
+
+  capacityTons    Decimal?  @db.Decimal(8, 2)
+  make            String?
+  insuranceExpiry DateTime?
+  fitnessExpiry   DateTime?
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  transporter    Transporter?    @relation(fields: [transporterId], references: [id], onDelete: Restrict)
+  gatePasses     GatePass[]
+  stockTransfers StockTransfer[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([transporterId])
+  @@index([deletedAt])
+  @@map("vehicles")
+}
+
+model Driver {
+  id            String    @id @default(uuid()) @db.Uuid
+  code          String    @unique
+  name          String
+  phone         String
+  altPhone      String?
+  licenseNumber String?
+  licenseExpiry DateTime?
+  transporterId String?   @db.Uuid
+
+  addressLine1 String?
+  city         String?
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  transporter    Transporter?         @relation(fields: [transporterId], references: [id], onDelete: Restrict)
+  gatePasses     GatePass[]
+  stockTransfers StockTransfer[]
+  cashHandovers  DriverCashHandover[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([transporterId])
+  @@index([deletedAt])
+  @@map("drivers")
+}
+
+// ---------------------------------------------------------------------
+// Inventory: append-only movement ledger + balance projection
+//
+// Stock is NEVER edited directly. Every change is a StockMovement row, and
+// StockBalance is a projection maintained atomically alongside each posting.
+// ---------------------------------------------------------------------
+
+enum MovementType {
+  OPENING
+  PURCHASE
+  PURCHASE_RETURN
+  SALE
+  SALE_RETURN
+  ADJUSTMENT
+  TRANSFER_OUT
+  TRANSFER_IN
+  /// Goods out on a sample gate pass — no invoice, so the pass is the movement
+  SAMPLE_OUT
+  /// A returnable sample coming back in
+  SAMPLE_IN
+}
+
+enum MovementDirection {
+  IN
+  OUT
+}
+
+model StockMovement {
+  id String @id @default(uuid()) @db.Uuid
+
+  productId String  @db.Uuid
+  branchId  String  @db.Uuid
+  godownId  String  @db.Uuid
+  gateId    String? @db.Uuid
+  rackId    String? @db.Uuid
+
+  /// Optional stock dimensions used across the tile trade
+  batchNo String?
+  shade   String?
+
+  type      MovementType
+  direction MovementDirection
+  /// Always positive; `direction` carries the sign
+  qtyBoxes  Decimal           @db.Decimal(14, 3)
+
+  /// Source document, e.g. purchase invoice or adjustment note
+  refType   String?
+  refId     String? @db.Uuid
+  refNumber String?
+  reason    String?
+  remarks   String?
+
+  movementDate DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  godown  Godown  @relation(fields: [godownId], references: [id], onDelete: Restrict)
+  gate    Gate?   @relation(fields: [gateId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([productId])
+  @@index([branchId, godownId])
+  @@index([movementDate])
+  @@index([refType, refId])
+  @@map("stock_movements")
+}
+
+model StockBalance {
+  id String @id @default(uuid()) @db.Uuid
+
+  productId String  @db.Uuid
+  branchId  String  @db.Uuid
+  godownId  String  @db.Uuid
+  gateId    String? @db.Uuid
+  batchNo   String?
+  shade     String?
+
+  qtyBoxes Decimal @default(0) @db.Decimal(14, 3)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  godown  Godown  @relation(fields: [godownId], references: [id], onDelete: Restrict)
+
+  updatedAt DateTime @updatedAt
+
+  /// One balance row per stock-keeping dimension combination
+  @@unique([productId, branchId, godownId, gateId, batchNo, shade], name: "stockKey")
+  @@index([branchId, godownId])
+  @@index([productId])
+  @@map("stock_balances")
+}
+
+/// A completed stock transfer between two godowns (same or different branches).
+/// Posting a transfer writes paired TRANSFER_OUT / TRANSFER_IN movements.
+enum TransferStatus {
+  /// Dispatched: out of the source godown, not yet booked in at the destination
+  IN_TRANSIT
+  RECEIVED
+  /// Turned back before arrival; the stock is returned to the source godown
+  CANCELLED
+}
+
+/// Which paper travels with the goods. Moving your own stock between godowns under one
+/// GSTIN is not a supply, so it goes on a delivery challan. Two branches registered
+/// separately are two persons under GST, so the same move is a supply and needs a real
+/// tax invoice that lands in GSTR-1.
+enum TransferDocumentType {
+  DELIVERY_CHALLAN
+  TAX_INVOICE
+}
+
+model StockTransfer {
+  id         String @id @default(uuid()) @db.Uuid
+  transferNo String @unique
+
+  fromBranchId String @db.Uuid
+  fromGodownId String @db.Uuid
+  toBranchId   String @db.Uuid
+  toGodownId   String @db.Uuid
+
+  transferDate DateTime @default(now())
+  remarks      String?
+
+  status TransferStatus @default(IN_TRANSIT)
+
+  /// Decided when the transfer is posted, from the two branches' GSTINs, and frozen:
+  /// a GSTIN added to a branch later must not rewrite paper already handed over.
+  documentType TransferDocumentType @default(DELIVERY_CHALLAN)
+  /// The number printed on the document. A separate series from transferNo, because a
+  /// tax invoice raised on a transfer has to sit in an invoice series of its own.
+  documentNo   String               @unique
+
+  /// Frozen at post time so the document prints the same after a master is edited
+  fromGstin  String?
+  toGstin    String?
+  /// True when the two branches sit in different states, so the tax is IGST
+  interState Boolean @default(false)
+
+  /// Valuation. A challan carries value but no tax; only a tax invoice charges.
+  subTotal   Decimal @default(0) @db.Decimal(14, 2)
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount  Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Who moved it. Free of the gate pass, because a transfer often goes on a hired
+  /// lorry that carries nothing else.
+  transporterId String? @db.Uuid
+  vehicleId     String? @db.Uuid
+  driverId      String? @db.Uuid
+  /// The transporter's own consignment note number
+  lrNumber      String?
+  /// What the lorry cost you to move your own stock — a cost, never billed to anyone
+  freightCharge Decimal @default(0) @db.Decimal(12, 2)
+
+  /// E-way bill. Generated on the government portal; the number is recorded here so the
+  /// document and the portal can be reconciled.
+  distanceKm   Int?
+  ewayBillNo   String?
+  ewayBillDate DateTime?
+
+  /// Acknowledgement at the far end
+  receivedAt     DateTime?
+  receivedBy     String?   @db.Uuid
+  receivedByName String?
+  receiptRemarks String?
+
+  cancelledAt  DateTime?
+  cancelledBy  String?   @db.Uuid
+  cancelReason String?
+
+  lines      StockTransferLine[]
+  gatePasses GatePassDocument[]
+
+  transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: SetNull)
+  vehicle     Vehicle?     @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  driver      Driver?      @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([fromBranchId])
+  @@index([toBranchId])
+  @@index([transferDate])
+  @@index([status])
+  @@map("stock_transfers")
+}
+
+model StockTransferLine {
+  id         String @id @default(uuid()) @db.Uuid
+  transferId String @db.Uuid
+
+  productId String  @db.Uuid
+  batchNo   String?
+  shade     String?
+  qtyBoxes  Decimal @db.Decimal(14, 3)
+
+  /// What arrived. Null until the transfer is received; short of qtyBoxes when the
+  /// lorry lost or broke some on the way.
+  qtyReceived Decimal? @db.Decimal(14, 3)
+
+  /// Landing cost at the time, copied so a later purchase cannot rewrite the document
+  rate         Decimal @default(0) @db.Decimal(12, 2)
+  gstRate      Decimal @default(0) @db.Decimal(5, 2)
+  lineSubTotal Decimal @default(0) @db.Decimal(14, 2)
+  lineGst      Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal    Decimal @default(0) @db.Decimal(14, 2)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([transferId])
+  @@map("stock_transfer_lines")
+}
+
+// ---------------------------------------------------------------------
+// Purchase: orders (receipt against them follows in the GRN module)
+// ---------------------------------------------------------------------
+
+enum PurchaseOrderStatus {
+  DRAFT
+  APPROVED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id       String @id @default(uuid()) @db.Uuid
+  poNumber String @unique
+
+  supplierId String @db.Uuid
+  branchId   String @db.Uuid
+
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  status       PurchaseOrderStatus @default(DRAFT)
+
+  /// Totals are recomputed from the lines on every write
+  subTotal   Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount  Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  /// The supplier's response from the portal: pending until they act, then acknowledged or
+  /// queried with a note. Independent of the internal approval status above.
+  supplierAckStatus PoAckStatus @default(PENDING)
+  supplierAckAt     DateTime?
+  supplierAckNote   String?
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  branch   Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  lines    PurchaseOrderLine[]
+  receipts GoodsReceipt[]
+
+  approvedAt DateTime?
+  approvedBy String?   @db.Uuid
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([supplierId])
+  @@index([branchId])
+  @@index([status])
+  @@index([orderDate])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id      String @id @default(uuid()) @db.Uuid
+  orderId String @db.Uuid
+
+  productId String @db.Uuid
+
+  qtyBoxes    Decimal @db.Decimal(14, 3)
+  /// Agreed purchase rate per box
+  rate        Decimal @db.Decimal(12, 2)
+  /// Line discount percentage
+  discountPct Decimal @default(0) @db.Decimal(5, 2)
+  gstRate     Decimal @db.Decimal(5, 2)
+
+  lineSubTotal Decimal @db.Decimal(14, 2)
+  lineGst      Decimal @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+
+  /// Running total of what has been received against this line
+  receivedBoxes Decimal @default(0) @db.Decimal(14, 3)
+
+  order   PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("purchase_order_lines")
+}
+
+/// Goods receipt note: what physically arrived, posting stock IN.
+model GoodsReceipt {
+  id        String @id @default(uuid()) @db.Uuid
+  grnNumber String @unique
+
+  /// Optional link to the order being fulfilled
+  orderId    String? @db.Uuid
+  supplierId String  @db.Uuid
+  branchId   String  @db.Uuid
+  godownId   String  @db.Uuid
+
+  receiptDate       DateTime @default(now())
+  supplierInvoiceNo String?
+  remarks           String?
+
+  order    PurchaseOrder?     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  supplier Supplier           @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  branch   Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  godown   Godown             @relation(fields: [godownId], references: [id], onDelete: Restrict)
+  lines    GoodsReceiptLine[]
+  invoices PurchaseInvoice[]
+  returns  PurchaseReturn[]
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([orderId])
+  @@index([supplierId])
+  @@index([branchId, godownId])
+  @@index([receiptDate])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptLine {
+  id        String @id @default(uuid()) @db.Uuid
+  receiptId String @db.Uuid
+
+  /// Line of the order being received against, when the GRN is order-linked
+  orderLineId String? @db.Uuid
+  productId   String  @db.Uuid
+
+  batchNo String?
+  shade   String?
+
+  qtyBoxes Decimal @db.Decimal(14, 3)
+  /// Rate at which the goods actually arrived
+  rate     Decimal @db.Decimal(12, 2)
+
+  receipt GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([receiptId])
+  @@index([orderLineId])
+  @@map("goods_receipt_lines")
+}
+
+enum PurchaseInvoiceStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+/// Supplier's bill for goods received. Posting it refreshes purchase rates and
+/// landing costs, and records the rate in the supplier rate history.
+model PurchaseInvoice {
+  id                String @id @default(uuid()) @db.Uuid
+  invoiceNumber     String @unique
+  /// The supplier's own bill number
+  supplierInvoiceNo String
+
+  supplierId String  @db.Uuid
+  branchId   String  @db.Uuid
+  receiptId  String? @db.Uuid
+
+  invoiceDate DateTime              @default(now())
+  dueDate     DateTime?
+  status      PurchaseInvoiceStatus @default(DRAFT)
+
+  /// Charges spread across the lines when refreshing landing cost
+  transportCharge  Decimal @default(0) @db.Decimal(14, 2)
+  additionalCharge Decimal @default(0) @db.Decimal(14, 2)
+
+  subTotal   Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount  Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal Decimal @default(0) @db.Decimal(14, 2)
+  /// Kept in step by posted supplier payments; grandTotal less this is what is still owed
+  paidAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  supplier           Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  branch             Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  receipt            GoodsReceipt?               @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  lines              PurchaseInvoiceLine[]
+  paymentAllocations SupplierPaymentAllocation[]
+
+  postedAt DateTime?
+  postedBy String?   @db.Uuid
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([supplierId])
+  @@index([branchId])
+  @@index([invoiceDate])
+  @@map("purchase_invoices")
+}
+
+model PurchaseInvoiceLine {
+  id        String @id @default(uuid()) @db.Uuid
+  invoiceId String @db.Uuid
+  productId String @db.Uuid
+
+  qtyBoxes    Decimal @db.Decimal(14, 3)
+  rate        Decimal @db.Decimal(12, 2)
+  discountPct Decimal @default(0) @db.Decimal(5, 2)
+  gstRate     Decimal @db.Decimal(5, 2)
+
+  lineSubTotal Decimal @db.Decimal(14, 2)
+  lineGst      Decimal @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+
+  invoice PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@map("purchase_invoice_lines")
+}
+
+/// Historical purchase rates per supplier and product, written when an invoice posts.
+model SupplierProductRate {
+  id         String @id @default(uuid()) @db.Uuid
+  supplierId String @db.Uuid
+  productId  String @db.Uuid
+
+  rate          Decimal  @db.Decimal(12, 2)
+  /// Landing cost implied by this purchase, including apportioned charges
+  landingCost   Decimal  @db.Decimal(12, 2)
+  effectiveOn   DateTime @default(now())
+  invoiceId     String?  @db.Uuid
+  invoiceNumber String?
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([supplierId, productId])
+  @@index([productId, effectiveOn])
+  @@map("supplier_product_rates")
+}
+
+enum PurchaseReturnStatus {
+  DRAFT
+  POSTED
+}
+
+/// Goods sent back to a supplier. Posting removes stock and produces a debit note.
+model PurchaseReturn {
+  id           String @id @default(uuid()) @db.Uuid
+  returnNumber String @unique
+
+  supplierId String  @db.Uuid
+  branchId   String  @db.Uuid
+  godownId   String  @db.Uuid
+  receiptId  String? @db.Uuid
+
+  returnDate DateTime             @default(now())
+  reason     String
+  remarks    String?
+  status     PurchaseReturnStatus @default(DRAFT)
+
+  subTotal       Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount      Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal     Decimal @default(0) @db.Decimal(14, 2)
+  /// How much of this debit note has been set off against payments. A return is credit
+  /// with the supplier until it is used, so it is tracked like an unspent balance.
+  adjustedAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  supplier       Supplier                   @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  branch         Branch                     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  godown         Godown                     @relation(fields: [godownId], references: [id], onDelete: Restrict)
+  receipt        GoodsReceipt?              @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  lines          PurchaseReturnLine[]
+  paymentSetOffs SupplierPaymentDebitNote[]
+
+  postedAt DateTime?
+  postedBy String?   @db.Uuid
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([supplierId])
+  @@index([branchId, godownId])
+  @@index([returnDate])
+  @@map("purchase_returns")
+}
+
+model PurchaseReturnLine {
+  id       String @id @default(uuid()) @db.Uuid
+  returnId String @db.Uuid
+
+  productId String  @db.Uuid
+  batchNo   String?
+  shade     String?
+
+  qtyBoxes Decimal @db.Decimal(14, 3)
+  rate     Decimal @db.Decimal(12, 2)
+  gstRate  Decimal @db.Decimal(5, 2)
+
+  lineSubTotal Decimal @db.Decimal(14, 2)
+  lineGst      Decimal @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+
+  return  PurchaseReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  product Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([returnId])
+  @@map("purchase_return_lines")
+}
+
+// ---------------------------------------------------------------------
+// Sales: quotations and sales orders
+// ---------------------------------------------------------------------
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+model Quotation {
+  id              String @id @default(uuid()) @db.Uuid
+  quotationNumber String @unique
+
+  /// Optional link to a customer master; walk-in quotes keep only the snapshot below
+  customerId String? @db.Uuid
+  branchId   String  @db.Uuid
+
+  /// Customer details as quoted, so later edits to the master do not rewrite history
+  customerName    String
+  customerAddress String?
+  customerMobile  String?
+  /// The salesperson credited, plus a name snapshot for history
+  salesmanUserId  String? @db.Uuid
+  salesmanName    String?
+
+  quotationDate DateTime        @default(now())
+  validUntil    DateTime?
+  status        QuotationStatus @default(DRAFT)
+
+  subTotal  Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Charges added after tax, as quoted at the counter
+  freightCharge   Decimal @default(0) @db.Decimal(12, 2)
+  unloadingCharge Decimal @default(0) @db.Decimal(12, 2)
+  loadingCharge   Decimal @default(0) @db.Decimal(12, 2)
+  roundOff        Decimal @default(0) @db.Decimal(8, 2)
+
+  grandTotal Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  customer   Customer?       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch     Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  lines      QuotationLine[]
+  /// Set once the quotation has been converted into an order
+  salesOrder SalesOrder?
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+  @@index([quotationDate])
+  @@map("quotations")
+}
+
+model QuotationLine {
+  id          String @id @default(uuid()) @db.Uuid
+  quotationId String @db.Uuid
+  productId   String @db.Uuid
+
+  /// Quantity as entered at the counter, plus the derived total in boxes
+  boxes    Int     @default(0)
+  pieces   Int     @default(0)
+  qtyBoxes Decimal @db.Decimal(14, 3)
+
+  /// Printed MRP shown on the quotation
+  mrp         Decimal? @db.Decimal(12, 2)
+  rate        Decimal  @db.Decimal(12, 2)
+  discountPct Decimal  @default(0) @db.Decimal(5, 2)
+  gstRate     Decimal  @db.Decimal(5, 2)
+
+  lineSubTotal Decimal @db.Decimal(14, 2)
+  lineGst      Decimal @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([quotationId])
+  @@map("quotation_lines")
+}
+
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_INVOICED
+  INVOICED
+  CANCELLED
+}
+
+/// A confirmed commitment to sell. Confirming an order reserves stock; invoicing in a
+/// later sprint consumes those reservations and writes the SALE movements.
+model SalesOrder {
+  id          String @id @default(uuid()) @db.Uuid
+  orderNumber String @unique
+
+  /// Set when the order was raised by converting an accepted quotation
+  quotationId String? @unique @db.Uuid
+
+  /// Orders always belong to a customer master record: credit control depends on it
+  customerId String @db.Uuid
+  branchId   String @db.Uuid
+
+  /// Customer details as ordered, so later edits to the master do not rewrite history
+  customerName    String
+  customerAddress String?
+  customerMobile  String?
+  salesmanUserId  String? @db.Uuid
+  salesmanName    String?
+
+  orderDate    DateTime         @default(now())
+  deliveryDate DateTime?
+  status       SalesOrderStatus @default(DRAFT)
+
+  /// Whether this order may draw stock from branches other than its own.
+  ///
+  /// Off by default, and deliberately so: pulling from another branch turns one order
+  /// into several invoices under different GSTINs, and that should be a decision rather
+  /// than a surprise. Frozen at confirmation, because the reservations depend on it.
+  allowCrossBranch Boolean @default(false)
+
+  subTotal  Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Charges added after tax, matching the quotation they came from
+  freightCharge   Decimal @default(0) @db.Decimal(12, 2)
+  unloadingCharge Decimal @default(0) @db.Decimal(12, 2)
+  loadingCharge   Decimal @default(0) @db.Decimal(12, 2)
+  roundOff        Decimal @default(0) @db.Decimal(8, 2)
+
+  grandTotal Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  /// Recorded when the order is confirmed or cancelled
+  confirmedAt  DateTime?
+  confirmedBy  String?   @db.Uuid
+  cancelledAt  DateTime?
+  cancelledBy  String?   @db.Uuid
+  cancelReason String?
+
+  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch       Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  quotation    Quotation?         @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  lines        SalesOrderLine[]
+  reservations StockReservation[]
+  invoices     SalesInvoice[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+  @@index([orderDate])
+  @@map("sales_orders")
+}
+
+model SalesOrderLine {
+  id           String @id @default(uuid()) @db.Uuid
+  salesOrderId String @db.Uuid
+  productId    String @db.Uuid
+
+  /// Quantity as ordered, plus the derived total in boxes
+  boxes    Int     @default(0)
+  pieces   Int     @default(0)
+  qtyBoxes Decimal @db.Decimal(14, 3)
+
+  mrp         Decimal? @db.Decimal(12, 2)
+  rate        Decimal  @db.Decimal(12, 2)
+  discountPct Decimal  @default(0) @db.Decimal(5, 2)
+  gstRate     Decimal  @db.Decimal(5, 2)
+
+  lineSubTotal Decimal @db.Decimal(14, 2)
+  lineGst      Decimal @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+
+  /// Raised as invoices are cut against this order, in a later sprint
+  invoicedQtyBoxes Decimal @default(0) @db.Decimal(14, 3)
+
+  salesOrder   SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product      Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  reservations StockReservation[]
+
+  @@index([salesOrderId])
+  @@map("sales_order_lines")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED
+}
+
+/// Stock promised to a confirmed order. Reservations never touch stock_balances: free
+/// stock is the balance less the ACTIVE reservations held against the same stock key.
+model StockReservation {
+  id               String @id @default(uuid()) @db.Uuid
+  salesOrderId     String @db.Uuid
+  salesOrderLineId String @db.Uuid
+
+  productId String  @db.Uuid
+  branchId  String  @db.Uuid
+  godownId  String  @db.Uuid
+  gateId    String? @db.Uuid
+  batchNo   String?
+  shade     String?
+
+  qtyBoxes Decimal           @db.Decimal(14, 3)
+  status   ReservationStatus @default(ACTIVE)
+
+  /// Set when the reservation is released or consumed by an invoice
+  closedAt DateTime?
+  closedBy String?   @db.Uuid
+
+  salesOrder     SalesOrder     @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  salesOrderLine SalesOrderLine @relation(fields: [salesOrderLineId], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([salesOrderId])
+  @@index([productId, branchId, godownId])
+  @@index([status])
+  @@map("stock_reservations")
+}
+
+enum SalesInvoiceStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+/// How much of an invoice has physically left, rolled up from its gate passes.
+/// This is a projection of the gate pass lines, never edited on its own.
+enum DispatchStatus {
+  PENDING
+  PARTIAL
+  DISPATCHED
+}
+
+/// A tax invoice. Posting one consumes the order's reservations and writes the SALE
+/// movements that finally take the goods out of stock.
+model SalesInvoice {
+  id            String @id @default(uuid()) @db.Uuid
+  invoiceNumber String @unique
+
+  /// A sales order may be invoiced in several parts; counter sales have no order
+  salesOrderId String? @db.Uuid
+
+  customerId String @db.Uuid
+  branchId   String @db.Uuid
+
+  /// Billing details as invoiced, so later master edits do not rewrite history
+  customerName    String
+  customerAddress String?
+  customerMobile  String?
+  customerGstin   String?
+  /// Place of supply decides CGST+SGST versus IGST
+  placeOfSupply   String?
+  salesmanUserId  String? @db.Uuid
+  salesmanName    String?
+
+  invoiceDate    DateTime           @default(now())
+  dueDate        DateTime?
+  status         SalesInvoiceStatus @default(DRAFT)
+  /// Rolled up from the gate passes that carry this invoice
+  dispatchStatus DispatchStatus     @default(PENDING)
+
+  subTotal   Decimal @default(0) @db.Decimal(14, 2)
+  /// GST split three ways; only one pair is ever non-zero
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  gstAmount  Decimal @default(0) @db.Decimal(14, 2)
+
+  freightCharge   Decimal @default(0) @db.Decimal(12, 2)
+  unloadingCharge Decimal @default(0) @db.Decimal(12, 2)
+  loadingCharge   Decimal @default(0) @db.Decimal(12, 2)
+  roundOff        Decimal @default(0) @db.Decimal(8, 2)
+
+  grandTotal Decimal @default(0) @db.Decimal(14, 2)
+  /// Kept in step by collections in a later sprint
+  paidAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  postedAt     DateTime?
+  postedBy     String?   @db.Uuid
+  cancelledAt  DateTime?
+  cancelledBy  String?   @db.Uuid
+  cancelReason String?
+
+  customer    Customer                    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch      Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  salesOrder  SalesOrder?                 @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  lines       SalesInvoiceLine[]
+  allocations CustomerReceiptAllocation[]
+  gatePasses  GatePassDocument[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([customerId])
+  @@index([branchId])
+  @@index([salesOrderId])
+  @@index([status])
+  @@index([invoiceDate])
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceLine {
+  id               String  @id @default(uuid()) @db.Uuid
+  salesInvoiceId   String  @db.Uuid
+  productId        String  @db.Uuid
+  /// The order line being drawn down, when the invoice came from an order
+  salesOrderLineId String? @db.Uuid
+
+  /// Where the goods left from, so posting knows which balance to reduce
+  godownId String  @db.Uuid
+  gateId   String? @db.Uuid
+  batchNo  String?
+  shade    String?
+
+  hsnCode String?
+
+  boxes              Int     @default(0)
+  pieces             Int     @default(0)
+  qtyBoxes           Decimal @db.Decimal(14, 3)
+  /// How much of this line has been loaded and gated out, rolled up from gate passes
+  dispatchedQtyBoxes Decimal @default(0) @db.Decimal(14, 3)
+
+  mrp         Decimal? @db.Decimal(12, 2)
+  rate        Decimal  @db.Decimal(12, 2)
+  discountPct Decimal  @default(0) @db.Decimal(5, 2)
+  gstRate     Decimal  @db.Decimal(5, 2)
+
+  lineSubTotal Decimal @db.Decimal(14, 2)
+  lineCgst     Decimal @default(0) @db.Decimal(14, 2)
+  lineSgst     Decimal @default(0) @db.Decimal(14, 2)
+  lineIgst     Decimal @default(0) @db.Decimal(14, 2)
+  lineGst      Decimal @db.Decimal(14, 2)
+  lineTotal    Decimal @db.Decimal(14, 2)
+
+  /// The product's landing cost per box on the day this was posted, frozen like the
+  /// customer's name above it. Margin has to be what it was; a purchase next month must
+  /// not restate last month's profit.
+  unitCost Decimal? @db.Decimal(12, 2)
+
+  /// True when the cost above was filled in afterwards from the product's landing cost at
+  /// the time of the backfill, rather than captured at posting.
+  ///
+  /// Kept so an estimate can never be mistaken for a fact. The figure is the best one
+  /// available for invoices raised before cost was captured, but it is today's cost put
+  /// against an older sale, and any margin built on it should say so.
+  costEstimated Boolean @default(false)
+
+  salesInvoice SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([salesInvoiceId])
+  @@index([productId])
+  @@map("sales_invoice_lines")
+}
+
+enum ReceiptMode {
+  CASH
+  BANK
+  UPI
+  CHEQUE
+  CARD
+  /// More than one tender on the same receipt; the split is in receipt_payments
+  MIXED
+}
+
+enum ReceiptStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+/// Money collected from a customer. Posting a receipt settles the invoices it is
+/// allocated against; the allocation is what makes the ledger add up.
+model CustomerReceipt {
+  id            String @id @default(uuid()) @db.Uuid
+  receiptNumber String @unique
+
+  customerId String @db.Uuid
+  branchId   String @db.Uuid
+
+  receiptDate DateTime      @default(now())
+  /// The tender when there is one; MIXED when the customer paid several ways
+  mode        ReceiptMode   @default(CASH)
+  status      ReceiptStatus @default(DRAFT)
+
+  /// Total of the payment lines
+  amount          Decimal @db.Decimal(14, 2)
+  /// Sum of the allocations; the rest sits as an on-account advance
+  allocatedAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  postedAt     DateTime?
+  postedBy     String?   @db.Uuid
+  cancelledAt  DateTime?
+  cancelledBy  String?   @db.Uuid
+  cancelReason String?
+
+  customer    Customer                    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch      Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  payments    CustomerReceiptPayment[]
+  allocations CustomerReceiptAllocation[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+  @@index([receiptDate])
+  @@map("customer_receipts")
+}
+
+/// One tender on a receipt: cash 1,000 and UPI 5,000 are two rows of the same receipt.
+model CustomerReceiptPayment {
+  id        String @id @default(uuid()) @db.Uuid
+  receiptId String @db.Uuid
+
+  mode   ReceiptMode
+  amount Decimal     @db.Decimal(14, 2)
+
+  /// Cheque number, UPI reference or bank transaction id
+  referenceNo String?
+
+  /// Where the money landed. Posting the receipt writes this amount into that account's
+  /// book, so the drawer and the bank statement agree without anyone typing it twice.
+  /// Optional: receipts taken before accounts existed have none.
+  accountId String? @db.Uuid
+
+  /// Free text, kept for rows raised before accounts existed. New rows name an account.
+  bankName String?
+
+  receipt CustomerReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  account LedgerAccount?  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([receiptId])
+  @@index([accountId])
+  @@map("customer_receipt_payments")
+}
+
+/// How much of a receipt settles which invoice.
+model CustomerReceiptAllocation {
+  id        String @id @default(uuid()) @db.Uuid
+  receiptId String @db.Uuid
+
+  salesInvoiceId String  @db.Uuid
+  amount         Decimal @db.Decimal(14, 2)
+
+  receipt      CustomerReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  salesInvoice SalesInvoice    @relation(fields: [salesInvoiceId], references: [id], onDelete: Restrict)
+
+  @@index([receiptId])
+  @@index([salesInvoiceId])
+  @@map("customer_receipt_allocations")
+}
+
+// ---------------------------------------------------------------------
+// Cash and bank
+//
+// One append-only book. Every rupee that moves — collected, paid,
+// spent, or shifted between a drawer and a bank — is a row here, and
+// the balance of an account is its opening plus the rows since. The
+// balance is never stored, for the same reason stock balances are a
+// projection: a stored figure and a ledger disagree eventually, and
+// the ledger is the one that can be audited.
+// ---------------------------------------------------------------------
+
+enum LedgerAccountType {
+  /// A physical drawer at a branch
+  CASH
+  BANK
+  /// Cash held by an owner after the day's takings are handed over. Still the company's
+  /// money and still counted — it has simply left the till, which is why it is its own
+  /// type rather than another CASH row that would inflate "cash in the branches".
+  OWNER
+}
+
+/// A cash box or a bank account.
+model LedgerAccount {
+  id   String            @id @default(uuid()) @db.Uuid
+  code String            @unique
+  name String
+  type LedgerAccountType
+
+  /// Whose money it is. A drawer belongs to a branch; a bank account may be
+  /// company-wide, in which case this is null.
+  branchId String? @db.Uuid
+
+  /// Bank only
+  bankName      String?
+  accountNumber String?
+  ifsc          String?
+
+  /// The balance on the day the book was opened, before any entry exists
+  openingBalance Decimal  @default(0) @db.Decimal(14, 2)
+  openingDate    DateTime @default(now())
+
+  /// What a drawer keeps back at day close to open with tomorrow. The rest of the count
+  /// is handed to an owner. Zero means hand over everything.
+  retainedFloat Decimal @default(0) @db.Decimal(14, 2)
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  branch      Branch?     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  entries     CashEntry[] @relation("EntryAccount")
+  transfersIn CashEntry[] @relation("EntryCounterAccount")
+
+  receiptPayments CustomerReceiptPayment[]
+  paymentTenders  SupplierPaymentTender[]
+  driverHandovers DriverCashHandover[]
+  counts          CashCount[]
+  handoversTaken  CashCount[]              @relation("CountHandover")
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([branchId])
+  @@index([type])
+  @@index([deletedAt])
+  @@map("ledger_accounts")
+}
+
+/// What an expense was for: rent, fuel, wages, tea.
+model ExpenseHead {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique
+  name String
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  entries CashEntry[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@map("expense_heads")
+}
+
+enum CashEntryType {
+  /// Money in that is not a customer receipt — a refund, a director's introduction
+  RECEIPT
+  /// Money out that is not a supplier payment
+  PAYMENT
+  EXPENSE
+  /// Between two of your own accounts: drawer to bank, bank to drawer
+  TRANSFER
+  /// Bringing the book to what was actually counted at day close
+  ADJUSTMENT
+}
+
+enum CashEntryDirection {
+  IN
+  OUT
+}
+
+/// Where an entry came from, so an automatic one is not mistaken for a typed one.
+enum CashEntrySource {
+  MANUAL
+  CUSTOMER_RECEIPT
+  SUPPLIER_PAYMENT
+  DRIVER_CASH
+  CASH_COUNT
+}
+
+/// One movement of money on one account.
+///
+/// A transfer writes two rows, one OUT and one IN, linked to each other. Two rows rather
+/// than one with a sign, because each account's book has to read correctly on its own —
+/// the bank statement shows a deposit and the drawer shows a withdrawal, and neither
+/// wants to know about the other's side to balance.
+model CashEntry {
+  id          String @id @default(uuid()) @db.Uuid
+  entryNumber String @unique
+
+  accountId String  @db.Uuid
+  branchId  String? @db.Uuid
+
+  entryDate DateTime           @default(now())
+  type      CashEntryType
+  direction CashEntryDirection
+  amount    Decimal            @db.Decimal(14, 2)
+
+  /// EXPENSE only
+  expenseHeadId String? @db.Uuid
+
+  /// TRANSFER only: the account on the other side, and the row that mirrors this one
+  counterAccountId String? @db.Uuid
+  pairedEntryId    String? @unique @db.Uuid
+
+  source    CashEntrySource @default(MANUAL)
+  /// What produced it, when it was not typed: a receipt number, a payment number
+  refType   String?
+  refId     String?         @db.Uuid
+  refNumber String?
+
+  /// Cheque number, UPI reference, voucher number
+  referenceNo String?
+  narration   String?
+
+  /// Reversing writes a fresh contra row rather than editing this one
+  reversedAt      DateTime?
+  reversedBy      String?   @db.Uuid
+  reversalReason  String?
+  reversalEntryId String?   @unique @db.Uuid
+
+  account        LedgerAccount  @relation("EntryAccount", fields: [accountId], references: [id], onDelete: Restrict)
+  counterAccount LedgerAccount? @relation("EntryCounterAccount", fields: [counterAccountId], references: [id], onDelete: Restrict)
+  expenseHead    ExpenseHead?   @relation(fields: [expenseHeadId], references: [id], onDelete: Restrict)
+  branch         Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([accountId, entryDate])
+  @@index([branchId])
+  @@index([type])
+  @@index([expenseHeadId])
+  @@index([refType, refId])
+  @@map("cash_entries")
+}
+
+// ---------------------------------------------------------------------
+// Document numbering
+//
+// Two tables on purpose. The prefix is a setting a person edits; the
+// counter is machine state that must never be casually changed, because
+// moving it backwards mints a duplicate invoice number and there is no
+// tidy way to unmake one.
+// ---------------------------------------------------------------------
+
+enum DocumentType {
+  QUOTATION
+  SALES_ORDER
+  SALES_INVOICE
+  RECEIPT
+  PURCHASE_ORDER
+  GOODS_RECEIPT
+  PURCHASE_INVOICE
+  PURCHASE_RETURN
+  SUPPLIER_PAYMENT
+  STOCK_TRANSFER
+  /// The paper a transfer travels on, when it is not a supply
+  TRANSFER_CHALLAN
+  /// The paper a transfer travels on between two GSTINs
+  TRANSFER_INVOICE
+  GATE_PASS
+  DRIVER_CASH_HANDOVER
+  TRANSPORTER
+  DRIVER
+  CASH_ENTRY
+  EXPENSE
+  CASH_COUNT
+  CREDIT_APPROVAL
+}
+
+/// How one branch numbers one kind of document.
+model NumberSeriesSetting {
+  id String @id @default(uuid()) @db.Uuid
+
+  documentType DocumentType
+  /// Null for company-wide series: a transporter belongs to no branch.
+  branchId     String?      @db.Uuid
+
+  prefix        String
+  separator     String  @default("/")
+  padding       Int     @default(4)
+  /// Whether the financial year appears and the count restarts each April
+  resetAnnually Boolean @default(true)
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+  updatedAt DateTime @updatedAt
+  updatedBy String?  @db.Uuid
+  version   Int      @default(1)
+
+  @@unique([documentType, branchId], name: "seriesKey")
+  @@map("number_series_settings")
+}
+
+/// The running count for one series in one financial year.
+///
+/// Incremented under a row lock inside the same transaction that writes the document, so
+/// two tills cannot be handed the same number. Never edited by hand.
+///
+/// `scope` and `financialYear` are empty strings rather than nulls, and there is no
+/// foreign key on the branch. Both are deliberate: a unique index does not treat two
+/// NULLs as equal, so a nullable key would let two rows exist for the same counter and
+/// quietly issue the same number twice. An empty string is equal to itself.
+model NumberSequence {
+  id String @id @default(uuid()) @db.Uuid
+
+  documentType  DocumentType
+  /// The branch id, or "" for a company-wide series
+  scope         String
+  /// "26-27", or "" for a series that never resets
+  financialYear String
+
+  lastNumber Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([documentType, scope, financialYear], name: "sequenceKey")
+  @@map("number_sequences")
+}
+
+// ---------------------------------------------------------------------
+// Payables: money going out to suppliers
+//
+// The mirror of collections, with one addition. A customer settles with
+// money only; a supplier account is also settled by debit notes — goods
+// sent back are credit with them, and that credit is spent against their
+// bills instead of cash. So a payment carries tenders (money that left)
+// and set-offs (credit that was used), and the two together are what it
+// can allocate to invoices.
+// ---------------------------------------------------------------------
+
+/// Money paid to a supplier. Posting applies the allocations to their bills; anything
+/// unallocated sits as an advance against the supplier.
+model SupplierPayment {
+  id            String @id @default(uuid()) @db.Uuid
+  paymentNumber String @unique
+
+  supplierId String @db.Uuid
+  branchId   String @db.Uuid
+
+  paymentDate DateTime      @default(now())
+  /// The tender when there is one; MIXED when it was paid several ways. The receipt
+  /// enums are reused deliberately: a tender is a tender whichever way the money goes.
+  mode        ReceiptMode   @default(BANK)
+  status      ReceiptStatus @default(DRAFT)
+
+  /// Total of the tender lines — cash that actually left
+  amount          Decimal @default(0) @db.Decimal(14, 2)
+  /// Total of the debit notes set off — credit used instead of cash
+  adjustedAmount  Decimal @default(0) @db.Decimal(14, 2)
+  /// Sum of the allocations; the rest sits as an on-account advance
+  allocatedAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  remarks String?
+
+  postedAt     DateTime?
+  postedBy     String?   @db.Uuid
+  cancelledAt  DateTime?
+  cancelledBy  String?   @db.Uuid
+  cancelReason String?
+
+  supplier    Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  branch      Branch                      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  tenders     SupplierPaymentTender[]
+  allocations SupplierPaymentAllocation[]
+  debitNotes  SupplierPaymentDebitNote[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  version   Int       @default(1)
+
+  @@index([supplierId])
+  @@index([branchId])
+  @@index([status])
+  @@index([paymentDate])
+  @@map("supplier_payments")
+}
+
+/// One tender on a payment: a cheque of 50,000 and cash of 5,000 are two rows.
+model SupplierPaymentTender {
+  id        String @id @default(uuid()) @db.Uuid
+  paymentId String @db.Uuid
+
+  mode   ReceiptMode
+  amount Decimal     @db.Decimal(14, 2)
+
+  /// Cheque number, UPI reference or bank transaction id
+  referenceNo String?
+
+  /// Which account the money left. Posting writes it out of that account's book.
+  accountId String? @db.Uuid
+
+  /// Free text, kept for rows raised before accounts existed. New rows name an account.
+  bankName String?
+
+  payment SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  account LedgerAccount?  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([accountId])
+  @@map("supplier_payment_tenders")
+}
+
+/// How much of a payment settles which purchase invoice.
+model SupplierPaymentAllocation {
+  id        String @id @default(uuid()) @db.Uuid
+  paymentId String @db.Uuid
+
+  purchaseInvoiceId String  @db.Uuid
+  amount            Decimal @db.Decimal(14, 2)
+
+  payment         SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([purchaseInvoiceId])
+  @@map("supplier_payment_allocations")
+}
+
+/// A debit note spent on this payment: credit with the supplier used in place of cash.
+model SupplierPaymentDebitNote {
+  id        String @id @default(uuid()) @db.Uuid
+  paymentId String @db.Uuid
+
+  purchaseReturnId String  @db.Uuid
+  amount           Decimal @db.Decimal(14, 2)
+
+  payment        SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  purchaseReturn PurchaseReturn  @relation(fields: [purchaseReturnId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([purchaseReturnId])
+  @@map("supplier_payment_debit_notes")
+}
+
+// ---------------------------------------------------------------------
+// Dispatch: gate pass, loading and proof of delivery
+//
+// A gate pass is the security document for goods physically leaving the
+// premises. For SALES and TRANSFER it sits over stock that has ALREADY
+// moved — the invoice or the transfer wrote those movements — so the pass
+// records the loading, not the stock event. A SAMPLE pass is the exception:
+// nothing has been invoiced, so gating one out is itself the movement.
+// ---------------------------------------------------------------------
+
+enum GatePassType {
+  /// Posted sales invoices going to a customer
+  SALES
+  /// A stock transfer leaving for another godown or branch
+  TRANSFER
+  /// Goods out with no invoice — samples, display pieces, site approval
+  SAMPLE
+}
+
+enum GatePassStatus {
+  /// Being built; lines can still be edited
+  DRAFT
+  /// Loading finished and checked, waiting at the gate
+  LOADED
+  /// The vehicle has left
+  GATED_OUT
+  /// Proof of delivery received
+  DELIVERED
+  /// The vehicle is back at the gate, the odometer read and the cash handed in
+  CLOSED
+  CANCELLED
+}
+
+model GatePass {
+  id         String @id @default(uuid()) @db.Uuid
+  gatePassNo String @unique
+
+  type   GatePassType
+  status GatePassStatus @default(DRAFT)
+
+  branchId String  @db.Uuid
+  /// The gate the vehicle leaves by, where the branch has more than one
+  gateId   String? @db.Uuid
+
+  passDate DateTime @default(now())
+
+  /// Where it is going.
+  ///
+  /// `toBranchId` is set for a TRANSFER. `customerId` is set for a SAMPLE, and for a
+  /// SALES pass only when every invoice aboard happens to be for the same customer — a
+  /// lorry on a delivery round carries several, and each document names its own.
+  customerId  String? @db.Uuid
+  toBranchId  String? @db.Uuid
+  /// Free text for the site or address, which is often not the billing address
+  destination String?
+
+  /// Vehicle and driver as recorded at the gate. The ids are optional because a
+  /// hired lorry turning up unannounced is not in the master; the copied number
+  /// and name are what the printed pass and any dispute rely on.
+  transporterId   String? @db.Uuid
+  vehicleId       String? @db.Uuid
+  driverId        String? @db.Uuid
+  vehicleNumber   String?
+  driverName      String?
+  driverPhone     String?
+  transporterName String?
+
+  /// What the trip costs us, against what the customer was billed for freight.
+  /// Both are kept so the margin on a delivery is visible without a join.
+  hireCharge    Decimal @default(0) @db.Decimal(12, 2)
+  advancePaid   Decimal @default(0) @db.Decimal(12, 2)
+  billedFreight Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Samples are expected back. A returnable pass stays open until they are.
+  returnable         Boolean   @default(false)
+  expectedReturnDate DateTime?
+  returnedAt         DateTime?
+  returnedBy         String?   @db.Uuid
+
+  loadedAt   DateTime?
+  loadedBy   String?   @db.Uuid
+  gatedOutAt DateTime?
+  gatedOutBy String?   @db.Uuid
+
+  /// The odometer, read at the gate on the way out and again on the way back in.
+  /// Both are taken by the gate rather than the driver, which is the point of them.
+  startKm Int?
+  endKm   Int?
+
+  /// Closing the trip: the vehicle is back and the drops have been reconciled.
+  closedAt     DateTime?
+  closedBy     String?   @db.Uuid
+  closeRemarks String?
+
+  /// How much of what the driver collected has reached the counter.
+  ///
+  /// A projection of the handover lines below, never typed on its own — the driver may
+  /// close the trip at the gate and settle the cash an hour later, or settle three trips
+  /// at once, so the handover is the record and this is the running total.
+  cashHandedOver Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Proof of delivery
+  deliveredAt     DateTime?
+  deliveredBy     String?   @db.Uuid
+  receivedByName  String?
+  receivedByPhone String?
+  podRemarks      String?
+
+  cancelledAt  DateTime?
+  cancelledBy  String?   @db.Uuid
+  cancelReason String?
+
+  remarks String?
+
+  branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  gate        Gate?        @relation(fields: [gateId], references: [id], onDelete: Restrict)
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  toBranch    Branch?      @relation("GatePassToBranch", fields: [toBranchId], references: [id], onDelete: Restrict)
+  transporter Transporter? @relation(fields: [transporterId], references: [id], onDelete: Restrict)
+  vehicle     Vehicle?     @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  driver      Driver?      @relation(fields: [driverId], references: [id], onDelete: Restrict)
+
+  documents     GatePassDocument[]
+  lines         GatePassLine[]
+  handoverLines DriverCashHandoverLine[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([branchId])
+  @@index([customerId])
+  @@index([status])
+  @@index([passDate])
+  @@index([deletedAt])
+  @@map("gate_passes")
+}
+
+/// One document travelling on the pass. Several invoices — for several customers —
+/// commonly share a lorry, which is the whole reason the pass is not a field on the
+/// invoice and why the customer is recorded here rather than on the header.
+model GatePassDocument {
+  id         String @id @default(uuid()) @db.Uuid
+  gatePassId String @db.Uuid
+
+  salesInvoiceId  String? @db.Uuid
+  stockTransferId String? @db.Uuid
+
+  /// Whose goods these are. Null for a transfer, which goes to a branch.
+  customerId      String? @db.Uuid
+  customerName    String?
+  /// The delivery address for this drop, when it differs from the customer's own
+  deliveryAddress String?
+
+  /// The order the drops are made in on a multi-customer round
+  sequence Int @default(0)
+
+  /// What this customer is charged for this drop. Entered per drop rather than
+  /// apportioned, because the rate is agreed with the customer and not derived from
+  /// what the lorry cost. Printed on the driver's copy so it can be collected.
+  freightCharge       Decimal @default(0) @db.Decimal(12, 2)
+  /// What their invoice already billed them for freight, copied so the two can be
+  /// compared without a join: a drop already paid for is not collected again.
+  billedFreight       Decimal @default(0) @db.Decimal(12, 2)
+  /// Settled at the counter rather than at the door — often while the lorry is out.
+  /// It reduces what the driver should ask for.
+  freightPaidAtBranch Decimal @default(0) @db.Decimal(12, 2)
+  /// What the driver actually took at the door, recorded when the trip is closed.
+  freightCollected    Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Copied at the time so the pass prints the same after a later edit
+  documentNumber String
+  documentDate   DateTime
+  documentValue  Decimal  @default(0) @db.Decimal(14, 2)
+
+  gatePass      GatePass       @relation(fields: [gatePassId], references: [id], onDelete: Cascade)
+  salesInvoice  SalesInvoice?  @relation(fields: [salesInvoiceId], references: [id], onDelete: Restrict)
+  stockTransfer StockTransfer? @relation(fields: [stockTransferId], references: [id], onDelete: Restrict)
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  lines GatePassLine[]
+
+  @@index([gatePassId])
+  @@index([salesInvoiceId])
+  @@index([stockTransferId])
+  @@index([customerId])
+  @@map("gate_pass_documents")
+}
+
+/// What was actually put on the vehicle. `docQtyBoxes` is what the document
+/// says and `qtyBoxes` is what the loader counted; a difference is a short load
+/// and the gate is where it gets caught.
+model GatePassLine {
+  id         String  @id @default(uuid()) @db.Uuid
+  gatePassId String  @db.Uuid
+  documentId String? @db.Uuid
+
+  productId String  @db.Uuid
+  godownId  String  @db.Uuid
+  gateId    String? @db.Uuid
+  batchNo   String?
+  shade     String?
+
+  /// The quantity the document expects, zero for a sample raised from nothing
+  docQtyBoxes Decimal @default(0) @db.Decimal(14, 3)
+
+  boxes    Int     @default(0)
+  pieces   Int     @default(0)
+  qtyBoxes Decimal @db.Decimal(14, 3)
+
+  remarks String?
+
+  gatePass GatePass          @relation(fields: [gatePassId], references: [id], onDelete: Cascade)
+  document GatePassDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  godown   Godown            @relation(fields: [godownId], references: [id], onDelete: Restrict)
+
+  @@index([gatePassId])
+  @@index([documentId])
+  @@index([productId])
+  @@map("gate_pass_lines")
+}
+
+/// Money a driver hands to the counter for freight he collected on the road.
+///
+/// It is its own document because the cash and the vehicle arrive at different times: a
+/// trip closes at the gate when the lorry is back, and the driver settles at the counter
+/// afterwards — often for several trips at once at the end of the day. Between the two he
+/// is carrying the firm's money, and that balance is the thing worth being able to see.
+model DriverCashHandover {
+  id         String @id @default(uuid()) @db.Uuid
+  handoverNo String @unique
+
+  branchId   String  @db.Uuid
+  /// Copied, because a driver later removed from the master must not blank the record
+  driverId   String? @db.Uuid
+  driverName String
+
+  handoverDate DateTime @default(now())
+  /// Counted at the counter; the lines say which trips it clears
+  amount       Decimal  @db.Decimal(12, 2)
+
+  receivedBy     String? @db.Uuid
+  receivedByName String?
+  remarks        String?
+
+  /// Which drawer the notes went into. Recording it writes the money straight into that
+  /// account's book — the counter has counted it once already.
+  accountId String? @db.Uuid
+
+  branch  Branch                   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  driver  Driver?                  @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  account LedgerAccount?           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  lines   DriverCashHandoverLine[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([branchId])
+  @@index([driverId])
+  @@index([handoverDate])
+  @@index([accountId])
+  @@index([deletedAt])
+  @@map("driver_cash_handovers")
+}
+
+/// How much of a handover settles which trip.
+model DriverCashHandoverLine {
+  id         String @id @default(uuid()) @db.Uuid
+  handoverId String @db.Uuid
+  gatePassId String @db.Uuid
+
+  amount Decimal @db.Decimal(12, 2)
+
+  handover DriverCashHandover @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  gatePass GatePass           @relation(fields: [gatePassId], references: [id], onDelete: Restrict)
+
+  @@index([handoverId])
+  @@index([gatePassId])
+  @@map("driver_cash_handover_lines")
+}
+
+// ---------------------------------------------------------------------
+// Application settings (key-value, managed from the admin UI)
+// ---------------------------------------------------------------------
+
+model Setting {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  value       String
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  updatedBy String?  @db.Uuid
+  version   Int      @default(1)
+
+  @@map("settings")
+}
+
+// ---------------------------------------------------------------------
+// Audit trail (populated asynchronously by the worker's audit processor)
+// ---------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  entity    String
+  entityId  String
+  action    String
+  userId    String?  @db.Uuid
+  changes   Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+/// One day's counting of an account, and what it did or did not agree with.
+///
+/// A cash book that is never counted is a guess. Closing a day freezes what the book said,
+/// records what was actually in the drawer, and locks the day so nothing can be slipped in
+/// behind the count.
+model CashCount {
+  id      String @id @default(uuid()) @db.Uuid
+  countNo String @unique
+
+  accountId String  @db.Uuid
+  branchId  String? @db.Uuid
+
+  /// The day being closed. Date only: a close covers a day, not an instant.
+  closeDate DateTime @db.Date
+
+  /// What the book said at the end of that day, frozen at the moment of closing
+  expectedBalance Decimal @db.Decimal(14, 2)
+  /// What was actually in the drawer
+  countedAmount   Decimal @db.Decimal(14, 2)
+  /// counted less expected. Negative means the drawer is short.
+  variance        Decimal @db.Decimal(14, 2)
+
+  /// Note by note, as counted: { "500": 12, "200": 3, ... }. Null for a bank account,
+  /// which is reconciled against a statement rather than counted.
+  denominations Json?
+
+  /// The entry written to bring the book to the counted figure, when the difference was
+  /// posted rather than merely noted
+  adjustmentEntryId String? @unique @db.Uuid
+
+  /// The day's takings handed to an owner, and who took them. The drawer keeps the rest.
+  handoverAmount    Decimal @default(0) @db.Decimal(14, 2)
+  handoverAccountId String? @db.Uuid
+  /// The OUT leg on the drawer; its paired row is the IN on the owner's account
+  handoverEntryId   String? @unique @db.Uuid
+  /// What the drawer was left holding: counted less handover, and tomorrow's opening
+  retainedAmount    Decimal @default(0) @db.Decimal(14, 2)
+
+  notes String?
+
+  /// Reopening never deletes the close. The row stays, marked, and a fresh close is made
+  /// beside it — so a day that was closed twice says so.
+  reopenedAt   DateTime?
+  reopenedBy   String?   @db.Uuid
+  reopenReason String?
+
+  account         LedgerAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  handoverAccount LedgerAccount? @relation("CountHandover", fields: [handoverAccountId], references: [id], onDelete: Restrict)
+  branch          Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  createdBy String?  @db.Uuid
+
+  @@index([accountId, closeDate])
+  @@index([handoverAccountId])
+  @@index([branchId])
+  @@index([closeDate])
+  @@map("cash_counts")
+}
+
+enum CreditApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// Withdrawn by the person who raised it, before anyone decided
+  WITHDRAWN
+}
+
+enum CreditDocumentType {
+  SALES_ORDER
+  SALES_INVOICE
+}
+
+/// A request to let one document through on credit the customer has not earned.
+///
+/// The alternative was a dead end: the check refused the document and told the salesperson
+/// to find an approver, who then had to go and post it themselves. That loses the reason
+/// for the exception, loses who asked, and puts the approver's name on a document they did
+/// not raise.
+model CreditApproval {
+  id        String @id @default(uuid()) @db.Uuid
+  requestNo String @unique
+
+  documentType   CreditDocumentType
+  documentId     String             @db.Uuid
+  /// Copied, so a cancelled document still reads as itself on the queue
+  documentNumber String
+
+  customerId   String @db.Uuid
+  customerName String
+  branchId     String @db.Uuid
+
+  /// The breach exactly as it stood when the request was raised.
+  ///
+  /// Frozen rather than recomputed: an approver decides on the position in front of them,
+  /// and a figure that moves between asking and deciding makes the decision unauditable.
+  creditLimit       Decimal @db.Decimal(14, 2)
+  creditDays        Int
+  outstanding       Decimal @db.Decimal(14, 2)
+  documentValue     Decimal @db.Decimal(14, 2)
+  exposure          Decimal @db.Decimal(14, 2)
+  overLimitBy       Decimal @db.Decimal(14, 2)
+  oldestOverdueDays Int     @default(0)
+  overdueAmount     Decimal @default(0) @db.Decimal(14, 2)
+
+  /// The lowest rung that may release this, from the excess at request time
+  requiredLevel Int
+
+  /// Why the salesperson thinks it should go through
+  reason String
+
+  status CreditApprovalStatus @default(PENDING)
+
+  decidedBy    String?   @db.Uuid
+  decidedAt    DateTime?
+  decisionNote String?
+
+  /// Set once the document it released has actually been posted or confirmed, so an
+  /// approval cannot quietly be reused for a second attempt at a bigger number.
+  consumedAt DateTime?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  createdAt   DateTime @default(now())
+  requestedBy String?  @db.Uuid
+
+  @@index([status])
+  @@index([documentType, documentId])
+  @@index([customerId])
+  @@index([branchId])
+  @@map("credit_approvals")
+}
+
+// ---------------------------------------------------------------------
+// CRM: sales leads and the pipeline that turns them into quotations
+// ---------------------------------------------------------------------
+
+/// Where a lead came in from. Used for source-of-business reporting.
+enum LeadSource {
+  WALK_IN
+  PHONE
+  REFERRAL
+  WEBSITE
+  EXHIBITION
+  SOCIAL_MEDIA
+  ADVERTISEMENT
+  OTHER
+}
+
+/// The pipeline the lead moves through. CONVERTED is reached the moment the lead is
+/// turned into a quotation; NOT_INTERESTED is the dead-end and carries a reason.
+enum LeadStage {
+  NEW
+  FOLLOW_UP
+  CONVERTED
+  NOT_INTERESTED
+}
+
+/// A prospective buyer being worked towards a quotation.
+///
+/// Reference columns (customer, branch, owner, converted quotation) are kept as plain
+/// ids with a name snapshot alongside, matching how quotations carry their salesman and
+/// customer: the lead reads as itself in history even after a master record is edited or
+/// removed, and the module owns no foreign keys into records it does not manage.
+model Lead {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique
+
+  /// Contact person, and the trading name they buy under, if any
+  name        String
+  companyName String?
+
+  phone    String?
+  altPhone String?
+  email    String?
+  city     String?
+
+  source LeadSource @default(WALK_IN)
+  stage  LeadStage  @default(NEW)
+
+  /// The salesperson or telecaller responsible, with a name snapshot for the board
+  ownerUserId String? @db.Uuid
+  ownerName   String?
+
+  /// What the deal is thought to be worth, used to weight the pipeline
+  expectedValue Decimal @default(0) @db.Decimal(14, 2)
+
+  /// When the owner should next chase this lead
+  nextFollowUpAt DateTime?
+
+  /// Optional link to an existing customer master; a brand-new prospect has none until
+  /// they are registered
+  customerId String? @db.Uuid
+  /// The branch working the lead; required before it can be quoted
+  branchId   String? @db.Uuid
+  /// The marketing campaign this lead is attributed to, if any
+  campaignId String? @db.Uuid
+
+  /// The quotation this lead became, set once on conversion
+  convertedQuotationId String?   @unique @db.Uuid
+  convertedAt          DateTime?
+  /// Who performed the conversion, with a name snapshot for the board
+  convertedByUserId    String?   @db.Uuid
+  convertedByName      String?
+
+  /// Why a lead was marked NOT_INTERESTED, for win/loss analysis
+  lostReason String?
+
+  notes String?
+
+  /// The telecalling history worked against this lead
+  callLogs    CallLog[]
+  /// The field visits scheduled and reported against this lead
+  salesVisits SalesVisit[]
+  /// The campaign that brought the lead in, for attribution reporting
+  campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@index([stage])
+  @@index([ownerUserId])
+  @@index([nextFollowUpAt])
+  @@index([phone])
+  @@index([campaignId])
+  @@map("leads")
+}
+
+// ---------------------------------------------------------------------
+// CRM marketing: campaigns leads are attributed to, for spend-to-return reporting
+// ---------------------------------------------------------------------
+
+enum CampaignChannel {
+  PHONE
+  WHATSAPP
+  SMS
+  EMAIL
+  SOCIAL_MEDIA
+  EXHIBITION
+  PRINT
+  HOARDING
+  REFERRAL
+  WEBSITE
+  OTHER
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+/// A marketing push leads are attributed to. Its budget, set against the leads it brought
+/// in and how many converted, is what the performance report divides to a cost per lead and
+/// a return. Value is measured with the lead's own expected value, the same figure the
+/// pipeline board weights on, so marketing and sales read one number.
+model Campaign {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique
+  name String
+
+  channel CampaignChannel
+  status  CampaignStatus  @default(DRAFT)
+
+  /// What the campaign cost, divided into a cost per lead and per conversion
+  budget Decimal @default(0) @db.Decimal(14, 2)
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  objective String?
+  notes     String?
+
+  leads Lead[]
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@index([status])
+  @@index([channel])
+  @@map("campaigns")
+}
+
+// ---------------------------------------------------------------------
+// CRM telecalling: calls logged against a lead, with dispositions and callbacks
+// ---------------------------------------------------------------------
+
+enum CallDirection {
+  OUTBOUND
+  INBOUND
+}
+
+/// How a call ended. Connection outcomes and sentiment sit in one flat list, matching how
+/// a telecaller picks a single disposition at the end of a call.
+enum CallDisposition {
+  CONNECTED
+  NO_ANSWER
+  BUSY
+  SWITCHED_OFF
+  WRONG_NUMBER
+  CALLBACK
+  INTERESTED
+  NOT_INTERESTED
+}
+
+/// One call worked against a lead. Append-only in spirit: a mislogged call is soft-deleted
+/// rather than rewritten. Logging a call can move the lead's follow-up date and stage, but
+/// that side effect lives on the lead — here we only record what happened on the phone.
+model CallLog {
+  id     String @id @default(uuid()) @db.Uuid
+  leadId String @db.Uuid
+
+  /// Who made or took the call, with a name snapshot for the history
+  callerUserId String? @db.Uuid
+  callerName   String?
+
+  direction   CallDirection   @default(OUTBOUND)
+  disposition CallDisposition
+
+  /// Length of the call in seconds, when known
+  durationSec Int?
+
+  /// When the call happened
+  calledAt   DateTime  @default(now())
+  /// When to call back, set on a CALLBACK disposition; also written to the lead's follow-up
+  callbackAt DateTime?
+
+  notes String?
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@index([leadId])
+  @@index([callerUserId])
+  @@index([disposition])
+  @@index([callbackAt])
+  @@map("call_logs")
+}
+
+// ---------------------------------------------------------------------
+// CRM sales visits: field visits scheduled and reported against a lead
+// ---------------------------------------------------------------------
+
+enum VisitPurpose {
+  INTRODUCTION
+  PRODUCT_DEMO
+  QUOTATION_DISCUSSION
+  NEGOTIATION
+  SITE_MEASUREMENT
+  PAYMENT_FOLLOWUP
+  RELATIONSHIP
+  OTHER
+}
+
+enum VisitStatus {
+  PLANNED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+/// The result of a completed visit. Sentiment that, like a call disposition, can move the
+/// lead's stage — NOT_INTERESTED closes it, the rest keep it in play.
+enum VisitOutcome {
+  INTERESTED
+  NOT_INTERESTED
+  FOLLOW_UP_NEEDED
+  QUOTATION_REQUESTED
+  ORDER_DISCUSSED
+}
+
+/// One field visit against a lead. It has a lifecycle — planned, then completed (or
+/// cancelled / a no-show) — and, like a call, reporting it can move the lead's follow-up
+/// date and stage. Those consequences are written onto the lead; here we record the visit.
+model SalesVisit {
+  id     String @id @default(uuid()) @db.Uuid
+  leadId String @db.Uuid
+
+  /// Who is to make, or made, the visit, with a name snapshot for the history
+  salespersonUserId String? @db.Uuid
+  salespersonName   String?
+
+  purpose VisitPurpose  @default(INTRODUCTION)
+  status  VisitStatus   @default(PLANNED)
+  /// Set once the visit is completed
+  outcome VisitOutcome?
+
+  /// When the visit is planned for
+  scheduledAt DateTime
+  /// When it actually happened
+  completedAt DateTime?
+
+  /// Where the visit is / was
+  location String?
+  notes    String?
+
+  /// The next action date agreed at the visit, written to the lead's follow-up
+  nextFollowUpAt DateTime?
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([deletedAt])
+  @@index([leadId])
+  @@index([salespersonUserId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("sales_visits")
+}
+
+// ---------------------------------------------------------------------
+// Portals: external logins for suppliers and customers
+// ---------------------------------------------------------------------
+
+/// A supplier's response to a purchase order from the portal.
+enum PoAckStatus {
+  PENDING
+  ACKNOWLEDGED
+  QUERIED
+}
+
+enum PortalPartyType {
+  SUPPLIER
+  CUSTOMER
+}
+
+/// Links a login (User) to a party it may act for in a portal. A separate table rather than
+/// a column on the user, so one login can front more than one supplier or customer, and so
+/// portal access can be granted and revoked without touching the user itself.
+model PortalAccount {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  partyType  PortalPartyType
+  supplierId String?         @db.Uuid
+  customerId String?         @db.Uuid
+
+  isActive Boolean @default(true)
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  supplier Supplier? @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@unique([userId, supplierId])
+  @@unique([userId, customerId])
+  @@index([deletedAt])
+  @@index([supplierId])
+  @@index([customerId])
+  @@map("portal_accounts")
+}
+
+// ---------------------------------------------------------------------
+// SixOrbit integration (phase 12)
+// ---------------------------------------------------------------------
+
+/// Which of our records a sync attempt was about.
+enum SixOrbitEntityType {
+  /// Connection tests and logins, which belong to no business record.
+  CONNECTION
+  /// Their brands, categories and attributes.
+  MASTER
+  CUSTOMER
+  PRODUCT
+  SALES_ORDER
+}
+
+/// Which way the data moved.
+enum SixOrbitDirection {
+  /// TilesERP to SixOrbit.
+  PUSH
+  /// SixOrbit to TilesERP.
+  PULL
+}
+
+/// Connection details for the SixOrbit tenant.
+///
+/// In the database rather than the environment because the business needs to change the
+/// password without a deploy. The password is encrypted with AES-256-GCM under
+/// SIXORBIT_ENC_KEY, which stays in the environment — so a database dump on its own does
+/// not hand over the accounting system.
+///
+/// One row is active at a time. More than one is allowed so a test tenant can be kept
+/// alongside production and switched to without retyping anything.
+model SixOrbitConfig {
+  id      String @id @default(uuid()) @db.Uuid
+  /// e.g. "https://avthar.sixorbit.com". Their server does serve HTTPS — an earlier note
+  /// here claiming otherwise came from a redirect seen through a tool that rewrites the
+  /// scheme, and running this integration unencrypted on that basis would have been bad.
+  baseUrl String
+  /// The constant `key` query parameter every task carries.
+  apiKey  String @default("123")
+  email   String
+
+  /// AES-256-GCM. Never readable through the API — the settings screen is write-only.
+  passwordCipher String
+  passwordIv     String
+  passwordTag    String
+
+  /// The cached session. Redis holds the hot copy; this survives a Redis flush.
+  accessToken    String?
+  tokenUserId    String?
+  tokenFetchedAt DateTime?
+
+  /// Their server has no published timeout or rate limit. Both are settings, not
+  /// constants, so they can be tuned against real behaviour without a release.
+  requestTimeoutMs Int @default(30000)
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  createdAt DateTime  @default(now())
+  createdBy String?   @db.Uuid
+  updatedAt DateTime  @updatedAt
+  updatedBy String?   @db.Uuid
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+  version   Int       @default(1)
+
+  @@index([isActive, deletedAt])
+  @@map("sixorbit_config")
+}
+
+/// One row per attempt against their API — not per record, per attempt.
+///
+/// Append-only, and written by the client itself rather than by callers, so no code path
+/// can quietly skip it. This is the only place a failed sync can be understood after the
+/// fact, which is the difference between an integration that can be operated and one that
+/// can only be guessed at.
+model SixOrbitSyncLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  entityType SixOrbitEntityType
+  /// Our id for the record. Null for connection tests and whole-catalogue pulls.
+  entityId   String?            @db.Uuid
+  /// Their id, once we know it — cuid, isvid, and so on.
+  externalId String?
+
+  /// The `task` query parameter, e.g. "customer/add_customer".
+  task      String
+  direction SixOrbitDirection
+  /// 1 for the first try. A retry writes a new row rather than overwriting the first.
+  attempt   Int               @default(1)
+
+  success    Boolean
+  /// Their `result_code`. Not a status on its own — 20004 appears on both outcomes — so
+  /// it is stored for classification but `success` is what decides.
+  resultCode String?
+  message    String?
+
+  /// The task and its parameters with `password` and `access_token` masked. Their API
+  /// carries credentials in the query string, so the raw URL must never be stored.
+  requestSummary String?
+  /// The JSON we posted in their single `data` field, truncated. Null for a GET.
+  ///
+  /// Without this a rejected write is undiagnosable: their errors name a field
+  /// ("Please Provide valid item name") but not the value, and the query string above
+  /// carries none of the payload.
+  requestBody    String?
+  /// Truncated response body, kept for diagnosing a failure.
+  responseBody   String?
+
+  durationMs Int
+  /// The BullMQ job, so a log row can be traced back to the queue entry.
+  jobId      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([success, createdAt])
+  @@index([createdAt])
+  @@map("sixorbit_sync_logs")
+}
+
+/// How a product stands with SixOrbit.
+enum ProductSyncStatus {
+  /// Ours alone — never sent, never received.
+  NOT_SYNCED
+  /// Imported or pushed cleanly.
+  SYNCED
+  /// It is here, but the mapper found something a human should look at: an area that
+  /// disagrees with the tile's own size, a landing cost that cannot be right. Deliberately
+  /// distinct from FAILED, because the record IS usable — it just should not be trusted
+  /// silently.
+  NEEDS_ATTENTION
+  /// The last attempt did not complete. `sixorbitSyncError` says why.
+  FAILED
+  /// Queued to be pushed, not yet sent.
+  PENDING
+  /// Cannot be sent at all, and retrying will not change that — its brand or category
+  /// exists only here, and their API has no way to create one. `sixorbitSyncError` says
+  /// which, and what a human has to do about it. Deliberately distinct from FAILED: this
+  /// is a job for a person, not for the queue.
+  BLOCKED
+}
+
+/// One of their `attributes` entries against one of our products.
+///
+/// Their id pair (`aid`, `avid`) has to be sent back verbatim when a product is pushed,
+/// and neither has a counterpart in our catalogue, so it is stored rather than derived.
+model SixOrbitProductAttribute {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @db.Uuid
+
+  /// Their attribute id, e.g. SIZE.
+  aid   String
+  name  String
+  /// Their value id, e.g. 1600X800.
+  avid  String
+  value String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, aid])
+  @@index([productId])
+  @@map("sixorbit_product_attributes")
+}

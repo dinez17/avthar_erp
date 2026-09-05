@@ -1,0 +1,58 @@
+import { ALL_PERMISSIONS, PERMISSIONS, type PermissionValue } from './permissions';
+
+/** System roles seeded on first boot. Additional roles are managed at runtime. */
+export const SYSTEM_ROLES = {
+  SUPER_ADMIN: 'SUPER_ADMIN',
+  ADMIN: 'ADMIN',
+  MANAGER: 'MANAGER',
+  STAFF: 'STAFF',
+  SUPPLIER: 'SUPPLIER',
+  CUSTOMER: 'CUSTOMER',
+} as const;
+
+export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
+
+export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRole, PermissionValue[]> = {
+  [SYSTEM_ROLES.SUPER_ADMIN]: ALL_PERMISSIONS,
+  [SYSTEM_ROLES.ADMIN]: ALL_PERMISSIONS,
+  [SYSTEM_ROLES.MANAGER]: [
+    PERMISSIONS.USER_READ,
+    PERMISSIONS.ROLE_READ,
+    PERMISSIONS.AUDIT_READ,
+    // A manager runs the pipeline end to end, conversion included.
+    PERMISSIONS.CRM_LEAD_CREATE,
+    PERMISSIONS.CRM_LEAD_READ,
+    PERMISSIONS.CRM_LEAD_UPDATE,
+    PERMISSIONS.CRM_LEAD_DELETE,
+    PERMISSIONS.CRM_LEAD_CONVERT,
+    PERMISSIONS.CRM_CALL_CREATE,
+    PERMISSIONS.CRM_CALL_READ,
+    PERMISSIONS.CRM_CALL_DELETE,
+    PERMISSIONS.CRM_CAMPAIGN_CREATE,
+    PERMISSIONS.CRM_CAMPAIGN_READ,
+    PERMISSIONS.CRM_CAMPAIGN_UPDATE,
+    PERMISSIONS.CRM_CAMPAIGN_DELETE,
+    PERMISSIONS.CRM_VISIT_CREATE,
+    PERMISSIONS.CRM_VISIT_READ,
+    PERMISSIONS.CRM_VISIT_UPDATE,
+    PERMISSIONS.CRM_VISIT_DELETE,
+  ],
+  // Salespeople and telecallers work leads and hand them to the quotation desk, but do
+  // not delete them. They log calls and read the history; removing a call is a manager's.
+  // They read campaigns so a new lead can be attributed, but do not manage them.
+  [SYSTEM_ROLES.STAFF]: [
+    PERMISSIONS.USER_READ,
+    PERMISSIONS.CRM_LEAD_CREATE,
+    PERMISSIONS.CRM_LEAD_READ,
+    PERMISSIONS.CRM_LEAD_UPDATE,
+    PERMISSIONS.CRM_LEAD_CONVERT,
+    PERMISSIONS.CRM_CALL_CREATE,
+    PERMISSIONS.CRM_CALL_READ,
+    PERMISSIONS.CRM_CAMPAIGN_READ,
+    PERMISSIONS.CRM_VISIT_CREATE,
+    PERMISSIONS.CRM_VISIT_READ,
+    PERMISSIONS.CRM_VISIT_UPDATE,
+  ],
+  [SYSTEM_ROLES.SUPPLIER]: [],
+  [SYSTEM_ROLES.CUSTOMER]: [],
+};

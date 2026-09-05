@@ -1,0 +1,264 @@
+# =====================================================================
+# Tiles ERP — production stack.
+#
+# Differences from docker-compose.yml (which targets local development):
+#   * Postgres and Redis are NOT published to the host — they are reachable
+#     only on the internal Docker network.
+#   * Every secret is required from the environment; there are no fallbacks,
+#     so a missing value fails the deploy instead of shipping "change_me".
+#   * Swagger is disabled and CORS is restricted to the real domains.
+#   * A one-shot `migrate` service applies Prisma migrations (and optionally
+#     the seed) and must finish before api/worker start.
+#   * MailHog is gone; SMTP points at a real provider.
+#   * TLS terminates at the gateway, with certbot renewing Let's Encrypt certs.
+#
+# Run from the repository root:
+#   docker compose --env-file .env.production -f docker/docker-compose.prod.yml up -d
+# =====================================================================
+
+name: tiles-erp-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+x-db-url: &db-url
+  DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}?schema=public
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      # Deterministic collation so index ordering survives a restore.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Host-side dumps land here; see scripts/backup-db.sh
+      - ./backups:/backups
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # No `ports:` — the database is not reachable from outside the host.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--requirepass',
+        '${REDIS_PASSWORD:?set REDIS_PASSWORD}',
+        '--maxmemory-policy',
+        'noeviction',
+      ]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # BullMQ requires noeviction: evicting job keys would silently drop queued work.
+
+  # ---------------------------------------------------------------------
+  # One-shot: applies pending migrations, then seeds if RUN_SEED=true.
+  # api and worker wait for this to exit 0.
+  # ---------------------------------------------------------------------
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/migrate.Dockerfile
+    restart: 'no'
+    logging: *default-logging
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      <<: *db-url
+      NODE_ENV: production
+      RUN_SEED: ${RUN_SEED:-true}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?set SEED_ADMIN_EMAIL}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD}
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      <<: *db-url
+      NODE_ENV: production
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      API_PORT: '3000'
+      API_GLOBAL_PREFIX: api
+      # TLS terminates at the gateway; the API speaks plain HTTP on the internal network.
+      API_HTTPS: 'false'
+      # Explicit origins only — no "lan", no "*".
+      API_CORS_ORIGINS: https://${ADMIN_DOMAIN:?set ADMIN_DOMAIN},https://${SUPPLIER_DOMAIN:?set SUPPLIER_DOMAIN},https://${CUSTOMER_DOMAIN:?set CUSTOMER_DOMAIN}
+      SWAGGER_ENABLED: 'false'
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET}
+      JWT_ACCESS_EXPIRES_IN: ${JWT_ACCESS_EXPIRES_IN:-15m}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:?set SMTP_FROM}
+      UPLOAD_DIR: /app/uploads
+      UPLOAD_MAX_FILE_SIZE: ${UPLOAD_MAX_FILE_SIZE:-10485760}
+      SIXORBIT_ENC_KEY: ${SIXORBIT_ENC_KEY:?set SIXORBIT_ENC_KEY}
+    expose:
+      - '3000'
+    volumes:
+      - api_uploads:/app/uploads
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      <<: *db-url
+      NODE_ENV: production
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      SIXORBIT_ENC_KEY: ${SIXORBIT_ENC_KEY}
+
+  admin-pwa:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args:
+        APP: admin-pwa
+        VITE_APP_ENV: production
+        # Blank on purpose: the app derives `${origin}/api`, which is correct
+        # for every domain served through the gateway on 443.
+        VITE_API_URL: ''
+    restart: unless-stopped
+    logging: *default-logging
+    expose:
+      - '80'
+
+  supplier-pwa:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args:
+        APP: supplier-pwa
+        VITE_APP_ENV: production
+        VITE_API_URL: ''
+    restart: unless-stopped
+    logging: *default-logging
+    expose:
+      - '80'
+
+  customer-pwa:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args:
+        APP: customer-pwa
+        VITE_APP_ENV: production
+        VITE_API_URL: ''
+    restart: unless-stopped
+    logging: *default-logging
+    expose:
+      - '80'
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - api
+      - admin-pwa
+      - supplier-pwa
+      - customer-pwa
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+      SUPPLIER_DOMAIN: ${SUPPLIER_DOMAIN}
+      CUSTOMER_DOMAIN: ${CUSTOMER_DOMAIN}
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # gateway.prod.conf is a template: ${ADMIN_DOMAIN} etc. are substituted at
+      # container start by nginx's own envsubst entrypoint.
+      - ./nginx/prod.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
+    # The image entrypoint still runs first (it is what renders the template through
+    # envsubst); this only replaces the command it exec's. The reload loop picks up
+    # certificates certbot renewed underneath a running nginx.
+    command:
+      [
+        '/bin/sh',
+        '-c',
+        "nginx -g 'daemon off;' & nginx_pid=$$!; while :; do sleep 12h; nginx -s reload; done & wait $$nginx_pid",
+      ]
+
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    # Attempts renewal twice a day; certbot no-ops until a cert is within 30 days
+    # of expiry, which is the documented way to run it.
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+                  while :; do certbot renew --webroot -w /var/www/certbot --quiet;
+                  sleep 12h & wait $${!}; done"
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_uploads:
+  certbot_certs:
+  certbot_webroot:

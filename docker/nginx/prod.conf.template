@@ -1,0 +1,128 @@
+# =====================================================================
+# Production edge. Mounted at /etc/nginx/templates/default.conf.template so the
+# stock nginx entrypoint runs envsubst over it and writes
+# /etc/nginx/conf.d/default.conf at container start.
+#
+# ${ADMIN_DOMAIN}, ${SUPPLIER_DOMAIN} and ${CUSTOMER_DOMAIN} come from the
+# gateway service environment in docker-compose.prod.yml.
+# =====================================================================
+
+upstream tiles_api      { server api:3000;          keepalive 32; }
+upstream tiles_admin    { server admin-pwa:80;      keepalive 16; }
+upstream tiles_supplier { server supplier-pwa:80;   keepalive 16; }
+upstream tiles_customer { server customer-pwa:80;   keepalive 16; }
+
+# Needed for the WebSocket upgrade dance: "Connection: upgrade" on an upgrade
+# request, "Connection: close" otherwise. Socket.IO falls back to long-polling
+# without this, which is slow and breaks sticky assumptions.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# ---------------------------------------------------------------------
+# Port 80: ACME challenges only; everything else redirects to HTTPS.
+# ---------------------------------------------------------------------
+server {
+    listen 80 default_server;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------
+# Shared TLS + proxy behaviour.
+# ---------------------------------------------------------------------
+# Reused by every HTTPS server block below via `include`.
+
+# --- Admin PWA (primary domain) --------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${ADMIN_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${ADMIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ADMIN_DOMAIN}/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+    include /etc/nginx/snippets/security-headers.conf;
+
+    client_max_body_size 20m;
+
+    location /api/ {
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://tiles_api;
+    }
+
+    location / {
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://tiles_admin;
+    }
+}
+
+# --- Supplier portal --------------------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${SUPPLIER_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${ADMIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ADMIN_DOMAIN}/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+    include /etc/nginx/snippets/security-headers.conf;
+
+    client_max_body_size 20m;
+
+    location /api/ {
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://tiles_api;
+    }
+
+    location / {
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://tiles_supplier;
+    }
+}
+
+# --- Customer portal --------------------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${CUSTOMER_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${ADMIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ADMIN_DOMAIN}/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+    include /etc/nginx/snippets/security-headers.conf;
+
+    client_max_body_size 20m;
+
+    location /api/ {
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://tiles_api;
+    }
+
+    location / {
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://tiles_customer;
+    }
+}
+
+# --- Anything else on 443 (bare IP, unknown Host) ---------------------
+# Answers with the admin certificate and closes; keeps scanners off the app.
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/letsencrypt/live/${ADMIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ADMIN_DOMAIN}/privkey.pem;
+    include /etc/nginx/snippets/tls.conf;
+
+    return 444;
+}

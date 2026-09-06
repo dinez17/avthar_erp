@@ -23,10 +23,18 @@ RUN pnpm exec prisma generate --schema=/repo/prisma/schema.prisma \
  && pnpm --filter "@tiles-erp/worker" build \
  && pnpm --filter "@tiles-erp/worker" --prod deploy /app
 
-# See api.Dockerfile: the generated client does not survive `pnpm deploy`.
-RUN cd /app \
+# See api.Dockerfile: the generated client does not survive `pnpm deploy`, and
+# Prisma resolves @prisma/client from the SCHEMA's directory — so the schema has
+# to be copied into /app and generated from there, not referenced in /repo.
+RUN cp -R /repo/prisma /app/prisma \
+ && cd /app \
  && PRISMA_VERSION="$(node -p "require('@prisma/client/package.json').version")" \
- && npx --yes "prisma@${PRISMA_VERSION}" generate --schema=/repo/prisma/schema.prisma
+ && npx --yes "prisma@${PRISMA_VERSION}" generate --schema=/app/prisma/schema.prisma
+
+# Fail the build, not the container, if the client is still the stub.
+RUN cd /app \
+ && DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build" \
+    node -e "const{PrismaClient}=require('@prisma/client');new PrismaClient();console.log('Prisma client verified')"
 
 FROM node:20-alpine AS runtime
 ENV NODE_ENV=production

@@ -232,15 +232,21 @@ services:
       - ./nginx/snippets:/etc/nginx/snippets:ro
       - certbot_certs:/etc/letsencrypt:ro
       - certbot_webroot:/var/www/certbot:ro
-    # The image entrypoint still runs first (it is what renders the template through
-    # envsubst); this only replaces the command it exec's. The reload loop picks up
-    # certificates certbot renewed underneath a running nginx.
+    # /docker-entrypoint.sh renders /etc/nginx/templates/*.template through envsubst
+    # ONLY when its first argument is "nginx" — it starts with:
+    #     if [ "$$1" = "nginx" ] || [ "$$1" = "nginx-debug" ]; then ... fi
+    # So a command of ["/bin/sh", "-c", "nginx ..."] silently skips template
+    # rendering, leaves the image's stock default.conf in place, and serves the
+    # "Welcome to nginx!" page instead of the app. Invoking the entrypoint
+    # explicitly with "nginx" as $$1 keeps that step, and backgrounding it leaves
+    # room for the reload loop that picks up certbot-renewed certificates.
+    entrypoint: ['/bin/sh', '-c']
     command:
-      [
-        '/bin/sh',
-        '-c',
-        "nginx -g 'daemon off;' & nginx_pid=$$!; while :; do sleep 12h; nginx -s reload; done & wait $$nginx_pid",
-      ]
+      - |
+        /docker-entrypoint.sh nginx -g 'daemon off;' &
+        nginx_pid=$$!
+        while :; do sleep 12h; nginx -s reload 2>/dev/null || true; done &
+        wait $$nginx_pid
 
   certbot:
     image: certbot/certbot:latest

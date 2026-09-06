@@ -24,10 +24,13 @@ COPY apps/${APP}/package.json ./apps/${APP}/package.json
 RUN pnpm install --frozen-lockfile=false
 COPY packages ./packages
 COPY apps/${APP} ./apps/${APP}
-RUN pnpm --filter "@tiles-erp/shared-types" --filter "@tiles-erp/config" \
-        --filter "@tiles-erp/validation" --filter "@tiles-erp/hooks" \
-        --filter "@tiles-erp/ui" build \
- && pnpm --filter "@tiles-erp/${APP}" build
+# The "..." suffix means "this package AND its workspace dependencies", built in
+# topological order. A hand-written list of packages goes stale silently: it
+# omitted @tiles-erp/shared, which admin-pwa imports, and the build failed with
+# 56 "Cannot find module '@tiles-erp/shared'" errors. Letting pnpm derive the
+# set from package.json means adding a workspace dependency to any PWA needs no
+# change here.
+RUN pnpm --filter "@tiles-erp/${APP}..." build
 
 FROM nginx:1.27-alpine AS runtime
 ARG APP

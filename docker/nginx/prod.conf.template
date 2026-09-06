@@ -7,10 +7,20 @@
 # gateway service environment in docker-compose.prod.yml.
 # =====================================================================
 
-upstream tiles_api      { server api:3000;          keepalive 32; }
-upstream tiles_admin    { server admin-pwa:80;      keepalive 16; }
-upstream tiles_supplier { server supplier-pwa:80;   keepalive 16; }
-upstream tiles_customer { server customer-pwa:80;   keepalive 16; }
+# Docker's embedded DNS. Needed because the proxy_pass targets below are
+# variables, which defers name resolution to request time.
+#
+# This replaced `upstream { server api:3000; }` blocks. nginx resolves an
+# upstream's hostname ONCE, at config load, and refuses to start if it fails:
+#
+#     [emerg] host not found in upstream "api:3000"
+#
+# So a crash-looping API took the whole gateway down with it — including the
+# three PWAs, which do not depend on the API at all. Resolving per request means
+# a backend being down costs a 502 on that route only, and the gateway recovers
+# on its own once the backend returns.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 5s;
 
 # Needed for the WebSocket upgrade dance: "Connection: upgrade" on an upgrade
 # request, "Connection: close" otherwise. Socket.IO falls back to long-polling
@@ -56,12 +66,14 @@ server {
 
     location /api/ {
         include /etc/nginx/snippets/proxy.conf;
-        proxy_pass http://tiles_api;
+        set $upstream_api http://api:3000;
+        proxy_pass $upstream_api;
     }
 
     location / {
         include /etc/nginx/snippets/proxy.conf;
-        proxy_pass http://tiles_admin;
+        set $upstream_admin http://admin-pwa:80;
+        proxy_pass $upstream_admin;
     }
 }
 
@@ -80,12 +92,14 @@ server {
 
     location /api/ {
         include /etc/nginx/snippets/proxy.conf;
-        proxy_pass http://tiles_api;
+        set $upstream_api http://api:3000;
+        proxy_pass $upstream_api;
     }
 
     location / {
         include /etc/nginx/snippets/proxy.conf;
-        proxy_pass http://tiles_supplier;
+        set $upstream_supplier http://supplier-pwa:80;
+        proxy_pass $upstream_supplier;
     }
 }
 
@@ -104,12 +118,14 @@ server {
 
     location /api/ {
         include /etc/nginx/snippets/proxy.conf;
-        proxy_pass http://tiles_api;
+        set $upstream_api http://api:3000;
+        proxy_pass $upstream_api;
     }
 
     location / {
         include /etc/nginx/snippets/proxy.conf;
-        proxy_pass http://tiles_customer;
+        set $upstream_customer http://customer-pwa:80;
+        proxy_pass $upstream_customer;
     }
 }
 

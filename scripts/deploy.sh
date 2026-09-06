@@ -51,6 +51,16 @@ for var in JWT_ACCESS_SECRET JWT_REFRESH_SECRET; do
   (( ${#value} >= 16 )) || die "$var must be at least 16 characters"
 done
 
+# The API validates these with a Zod enum that accepts only lowercase 'true' or
+# 'false'. "True" is the natural thing to type and it crash-loops every service
+# that reads it — catch it here rather than after the containers start.
+for var in SMTP_SECURE SWAGGER_ENABLED API_HTTPS; do
+  value="${!var:-}"
+  if [[ -n "$value" && "$value" != "true" && "$value" != "false" ]]; then
+    die "$var must be exactly 'true' or 'false' in lowercase — found '$value'"
+  fi
+done
+
 perms="$(stat -c '%a' "$ENV_FILE")"
 [[ "$perms" == "600" ]] || warn "$ENV_FILE is mode $perms — run: chmod 600 $ENV_FILE"
 

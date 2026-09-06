@@ -106,15 +106,31 @@ Log out and back in for the group change to apply, then confirm:
 docker compose version   # expect v2.x
 ```
 
-**Firewall:**
+**Firewall.** Allow your SSH port **before** enabling ufw, or you lock yourself out of
+the server and need the provider's web console to get back in.
+
+This server's SSH listens on **2244**, not 22 — `ufw allow OpenSSH` would open the wrong
+port. Confirm the port first if you are ever unsure:
 
 ```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-sudo ufw status
+grep -i '^port' /etc/ssh/sshd_config     # or: ss -tlnp | grep sshd
 ```
+
+Then:
+
+```bash
+ufw allow 2244/tcp comment 'SSH'
+ufw allow 80/tcp comment 'HTTP - ACME challenge and redirect'
+ufw allow 443/tcp comment 'HTTPS'
+ufw enable
+ufw status verbose
+```
+
+`ufw enable` warns that it may disrupt existing SSH connections — answer `y`. Your current
+session survives; the rule above covers reconnecting.
+
+**Before closing this terminal, open a second one and confirm you can still SSH in.** If
+the firewall is wrong, that spare session is what lets you fix it.
 
 Note what is *not* opened: 5432 and 6379 stay closed, and the compose file publishes no
 ports for them either.

@@ -17,8 +17,10 @@ ENV_FILE=".env.production"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker/docker-compose.prod.yml)
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
-# shellcheck disable=SC1090
-set -a; source "$ENV_FILE"; set +a
+# Read the env file as DATA, never as a script (see scripts/load-env.sh).
+# shellcheck source=scripts/load-env.sh
+. "$REPO_ROOT/scripts/load-env.sh"
+load_env_file "$ENV_FILE"
 
 log() { printf '[backup] %s\n' "$*"; }
 

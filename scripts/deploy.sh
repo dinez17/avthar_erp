@@ -25,8 +25,12 @@ die()  { printf '\033[1;31m[deploy]\033[0m %s\n' "$*" >&2; exit 1; }
 # --- preflight ------------------------------------------------------------
 [[ -f "$ENV_FILE" ]] || die "$ENV_FILE not found. Copy .env.production.example and fill it in."
 
-# shellcheck disable=SC1090
-set -a; source "$ENV_FILE"; set +a
+# Read the env file as DATA, never as a script. See scripts/load-env.sh —
+# `source` would execute a password containing backticks or $(...).
+# shellcheck source=scripts/load-env.sh
+. "$REPO_ROOT/scripts/load-env.sh"
+load_env_file "$ENV_FILE"
+warn_on_dollar_values "$ENV_FILE"
 
 REQUIRED=(
   ADMIN_DOMAIN SUPPLIER_DOMAIN CUSTOMER_DOMAIN LETSENCRYPT_EMAIL

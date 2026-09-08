@@ -30,7 +30,14 @@ export const SIXORBIT_MEASUREMENT = {
   PIECES: '27',
   /** `measured_meaid: "10"`, label SQFT — the unit an area is quoted in. */
   SQFT: '10',
-  /** `package_meaid: "40"`, label Box. */
+  /**
+   * Label Box.
+   *
+   * NOT what `package_meaid` takes, despite the name suggesting it. Their
+   * `variation/edit_variation_submit` sample sends `package_meaid: "27"` — pieces —
+   * because `package_qty` counts the pieces in a package, not the boxes. Kept for the
+   * import side, where a box-quoted figure does appear.
+   */
   BOX: '40',
 } as const;
 
@@ -105,6 +112,10 @@ export const sqftPerPiece = (sqftPerBox: number, piecesPerBox: number): number =
  * except giving the validator something to object to.
  */
 export const CARRIED_FORWARD = [
+  // Their e-commerce linkage. We neither set nor understand it, so on an edit it is
+  // preserved exactly as they gave it to us — dropping it from a form submit is how a
+  // field silently gets cleared.
+  'e_commerce_id',
   'company',
   'default_vendor',
   'dealer_price',
@@ -160,6 +171,10 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     measurement_unit: SIXORBIT_MEASUREMENT.SQFT,
     pcount_meaid: SIXORBIT_MEASUREMENT.PIECES,
     pc_meaid: SIXORBIT_MEASUREMENT.SQFT,
+    // The unit `package_qty` is counted in. We send a piece count, so this is pieces —
+    // their own edit sample pairs `package_qty` with `package_meaid: "27"`. Omitting it
+    // left the unit to whatever their form defaulted to, which is not ours to assume.
+    package_meaid: SIXORBIT_MEASUREMENT.PIECES,
     barcode: input.barcode ?? '',
     brand: input.brandSixorbitId ?? '',
     categories: [{ id: input.categorySixorbitId ?? '' }],
@@ -179,6 +194,11 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     company: '',
     default_vendor: '',
     rack_code: '',
+    // Present in their edit form and sent as "0" there. Meaning undocumented — they
+    // look like flags for "this is the default unit / the default price basis". Sent
+    // as their own sample sends them rather than guessed at.
+    default_base: '0',
+    default_price_base: '0',
   };
 
   // Ours last in both cases: the flags above are theirs to keep, the fields below are ours

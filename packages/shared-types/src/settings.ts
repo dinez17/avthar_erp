@@ -9,6 +9,25 @@ export interface SettingItem {
   version: number;
 }
 
+/**
+ * The two settings every screen needs, including the ones nobody has signed in to yet.
+ *
+ * Listing settings requires SETTINGS_MANAGE, which a salesman does not have and a
+ * login page cannot have at all — so the name and logo are served separately rather
+ * than making the whole settings table public.
+ */
+export interface BrandingInfo {
+  /** Display name for the sidebar, the browser tab and printed headers. */
+  appName: string;
+  /**
+   * The logo as a data URI, or null when none has been uploaded.
+   *
+   * Held inline rather than as a file reference so it is covered by the database
+   * backup — the uploads volume is not.
+   */
+  logo: string | null;
+}
+
 /** One persisted audit trail entry. */
 export interface AuditLogItem {
   id: UUID;

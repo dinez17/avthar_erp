@@ -7,6 +7,7 @@ import { amountInWords } from '@tiles-erp/shared';
 import type { QuotationLineItem, QuotationPrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useQuotationPrint } from './api';
+import { PrintLogo } from '../../app/branding';
 
 /** A4 for the office copy, 80mm and 58mm for the counter roll printers. */
 type PaperSize = 'A4' | '80mm' | '58mm';
@@ -175,6 +176,7 @@ function PrintBody({ data, isRoll }: { data: QuotationPrintData; isRoll: boolean
   return (
     <>
       <div style={{ textAlign: 'center' }}>
+        <PrintLogo />
         <div className="title">{company.name}</div>
         {branch.addressLines.map((line) => (
           <div key={line}>{line}</div>

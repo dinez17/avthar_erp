@@ -116,6 +116,14 @@ async function seedSuperAdmin(branchId: string): Promise<void> {
 
 const DEFAULT_SETTINGS: { key: string; value: string; description: string }[] = [
   { key: 'app.name', value: 'Tiles ERP', description: 'Display name used across the UI' },
+  {
+    key: 'app.logo',
+    // Empty means "no logo"; settings.value is NOT NULL. Uploaded from the Settings
+    // screen, which stores it as a data URI so it travels with the database backup.
+    value: '',
+    description:
+      'Company logo shown in the sidebar, on the login screen, on printed documents and as the browser icon. Upload it from Settings rather than pasting a value here.',
+  },
   { key: 'app.currency', value: 'INR', description: 'Default currency code' },
   { key: 'app.dateFormat', value: 'DD/MM/YYYY', description: 'Default date display format' },
   { key: 'app.timezone', value: 'Asia/Kolkata', description: 'Default timezone' },

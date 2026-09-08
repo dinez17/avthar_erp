@@ -6,11 +6,13 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { loginSchema, type LoginInput } from '@tiles-erp/validation';
 import { AuthLayout } from '../../layouts/AuthLayout';
 import { useAuth } from '../../auth/AuthProvider';
+import { useBranding } from '../../app/branding';
 import { apiBaseUrl, ApiError } from '../../lib/api-client';
 
 /** Email/password sign-in screen. */
 export function LoginPage(): JSX.Element {
   const { login, isAuthenticated } = useAuth();
+  const { appName } = useBranding();
   const navigate = useNavigate();
   const location = useLocation();
   const [serverError, setServerError] = useState<string | null>(null);
@@ -40,7 +42,7 @@ export function LoginPage(): JSX.Element {
   });
 
   return (
-    <AuthLayout title="Tiles ERP" subtitle="Sign in to your account">
+    <AuthLayout title={appName} subtitle="Sign in to your account">
       <form onSubmit={onSubmit} noValidate>
         <Stack spacing={2}>
           {serverError && (

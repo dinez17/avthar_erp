@@ -7,6 +7,7 @@ import { amountInWords, formatBoxPieces } from '@tiles-erp/shared';
 import type { SalesInvoiceLineItem, SalesInvoicePrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useSalesInvoicePrint } from './invoices-api';
+import { PrintLogo } from '../../app/branding';
 
 /** A4 for the customer copy and the file, 80mm and 58mm for the counter roll printers. */
 type PaperSize = 'A4' | '80mm' | '58mm';
@@ -156,6 +157,7 @@ function PrintBody({ data, isRoll }: { data: SalesInvoicePrintData; isRoll: bool
   return (
     <>
       <div style={{ textAlign: 'center' }}>
+        <PrintLogo />
         <div className="title">{company.legalName ?? company.name}</div>
         {branch.addressLines.map((line) => (
           <div key={line}>{line}</div>

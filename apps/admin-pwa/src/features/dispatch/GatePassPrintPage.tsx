@@ -7,6 +7,7 @@ import { formatBoxPieces } from '@tiles-erp/shared';
 import type { GatePassPrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useGatePassPrint } from './gate-pass-api';
+import { PrintLogo } from '../../app/branding';
 
 /** A4 for the file copy and the driver's; the rolls for a quick security-desk slip. */
 type PaperSize = 'A4' | '80mm' | '58mm';
@@ -196,6 +197,7 @@ function PrintBody({ data, isRoll }: { data: GatePassPrintData; isRoll: boolean 
   return (
     <>
       <div style={{ textAlign: 'center' }}>
+        <PrintLogo />
         <div className="title">{company.legalName ?? company.name}</div>
         {branch.addressLines.map((line) => (
           <div key={line}>{line}</div>

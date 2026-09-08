@@ -4,7 +4,11 @@ import { SETTINGS_REPOSITORY } from './domain/settings.repository';
 import { PrismaSettingsRepository } from './infrastructure/prisma-settings.repository';
 import { SettingsController } from './presentation/settings.controller';
 import { NumberSeriesController } from './presentation/number-series.controller';
-import { ListSettingsHandler, UpdateSettingHandler } from './application/settings.handlers';
+import {
+  GetBrandingHandler,
+  ListSettingsHandler,
+  UpdateSettingHandler,
+} from './application/settings.handlers';
 
 /** Application settings: admin-managed key-value configuration. */
 @Module({
@@ -13,6 +17,7 @@ import { ListSettingsHandler, UpdateSettingHandler } from './application/setting
   providers: [
     { provide: SETTINGS_REPOSITORY, useClass: PrismaSettingsRepository },
     ListSettingsHandler,
+    GetBrandingHandler,
     UpdateSettingHandler,
   ],
 })

@@ -7,6 +7,7 @@ import { amountInWords, formatBoxPieces, needsEwayBill } from '@tiles-erp/shared
 import type { PrintPartyBlock } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useTransferPrint } from './transfers-api';
+import { PrintLogo } from '../../app/branding';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -103,6 +104,7 @@ export function TransferPrintPage(): JSX.Element {
         }}
       >
         <Box sx={{ textAlign: 'center', borderBottom: '1px solid #000', pb: 1 }}>
+          <PrintLogo height={48} />
           <Box sx={{ fontSize: 18, fontWeight: 700 }}>
             {company.legalName || company.name || fromBranch.name}
           </Box>

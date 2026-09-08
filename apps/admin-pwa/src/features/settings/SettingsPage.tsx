@@ -11,11 +11,18 @@ import {
 import { useEffect, useState } from 'react';
 import { PageContainer } from '@tiles-erp/ui';
 import type { SettingItem } from '@tiles-erp/shared-types';
+import { useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../../lib/api-client';
+import { brandingQueryKey } from '../../app/branding';
+import { LogoSetting } from './LogoSetting';
 import { useSettings, useUpdateSetting } from './api';
+
+/** Settings the shell reads through its own cached branding query. */
+const BRANDING_KEYS = new Set(['app.name', 'app.logo']);
 
 function SettingRow({ setting }: { setting: SettingItem }): JSX.Element {
   const updateSetting = useUpdateSetting();
+  const queryClient = useQueryClient();
   const [value, setValue] = useState(setting.value);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -31,6 +38,12 @@ function SettingRow({ setting }: { setting: SettingItem }): JSX.Element {
     setSaved(false);
     try {
       await updateSetting.mutateAsync({ key: setting.key, value, version: setting.version });
+      // The sidebar, browser tab and print headers read the name from the branding
+      // query, not from this list — without this, saving app.name changed nothing
+      // visible until a reload.
+      if (BRANDING_KEYS.has(setting.key)) {
+        await queryClient.invalidateQueries({ queryKey: brandingQueryKey });
+      }
       setSaved(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to save');
@@ -91,9 +104,15 @@ export function SettingsPage(): JSX.Element {
       <Stack spacing={2} sx={{ maxWidth: 640 }}>
         {isLoading &&
           [1, 2, 3].map((n) => <Skeleton key={n} variant="rounded" height={120} />)}
-        {(data ?? []).map((setting) => (
-          <SettingRow key={setting.key} setting={setting} />
-        ))}
+        {(data ?? []).map((setting) =>
+          // The logo is an image, not a string anyone should be pasting into a
+          // text field — it gets a picker with a preview instead.
+          setting.key === 'app.logo' ? (
+            <LogoSetting key={setting.key} setting={setting} />
+          ) : (
+            <SettingRow key={setting.key} setting={setting} />
+          ),
+        )}
       </Stack>
     </PageContainer>
   );

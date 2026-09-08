@@ -20,7 +20,7 @@ export default defineConfig({
         name: 'Tiles ERP Admin',
         short_name: 'ERP Admin',
         description: 'Tiles ERP - Tiles ERP Admin',
-        theme_color: '#0B5FFF',
+        theme_color: '#3A57E8',
         background_color: '#ffffff',
         display: 'standalone',
         display_override: ['standalone', 'minimal-ui'],

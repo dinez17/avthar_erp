@@ -7,6 +7,7 @@ import { amountInWords } from '@tiles-erp/shared';
 import type { ReceiptPrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useReceiptPrint } from './receipts-api';
+import { PrintLogo } from '../../app/branding';
 
 /** A4 for the file copy, 80mm and 58mm for the counter roll printers. */
 type PaperSize = 'A4' | '80mm' | '58mm';
@@ -150,6 +151,7 @@ function PrintBody({ data, isRoll }: { data: ReceiptPrintData; isRoll: boolean }
   return (
     <>
       <div style={{ textAlign: 'center' }}>
+        <PrintLogo />
         <div className="title">{company.legalName ?? company.name}</div>
         {branch.addressLines.map((line) => (
           <div key={line}>{line}</div>

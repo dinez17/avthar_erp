@@ -177,6 +177,10 @@ services:
         # Blank on purpose: the app derives `${origin}/api`, which is correct
         # for every domain served through the gateway on 443.
         VITE_API_URL: ''
+        # Name shown on a phone's home screen after installing. Changing it needs a
+        # rebuild, and anyone who already installed the app must remove and re-add it.
+        VITE_APP_NAME: ${PWA_APP_NAME:-Avthar ERP}
+        VITE_APP_SHORT_NAME: ${PWA_SHORT_NAME:-Avthar}
     restart: unless-stopped
     logging: *default-logging
     expose:

@@ -7,6 +7,22 @@ import { VitePWA } from 'vite-plugin-pwa';
 // address does not, so `pnpm dev:https` serves over HTTPS with a self-signed cert.
 const useHttps = process.env.VITE_HTTPS === 'true';
 
+/**
+ * The installed app's name, fixed at build time.
+ *
+ * The `app.name` setting cannot reach this. A browser reads the web app manifest when
+ * the app is installed and then stores the name and icon with the home-screen entry —
+ * so changing a database row afterwards renames nothing on anyone's phone. The same
+ * goes for `public/icons/*`: those files ARE the installed icon.
+ *
+ * Set VITE_APP_NAME at build time to brand a deployment (docker/web.Dockerfile passes
+ * it through as a build arg). Renaming after people have installed the app requires
+ * them to remove it and add it again.
+ */
+const appName = process.env.VITE_APP_NAME?.trim() || 'Tiles ERP';
+/** Home-screen labels get truncated past ~12 characters on most launchers. */
+const appShortName = process.env.VITE_APP_SHORT_NAME?.trim() || appName;
+
 // https://vite.dev
 export default defineConfig({
   plugins: [
@@ -17,9 +33,9 @@ export default defineConfig({
       includeAssets: ['favicon.svg', 'robots.txt', 'icons/icon.svg'],
       manifest: {
         id: '/',
-        name: 'Tiles ERP Admin',
-        short_name: 'ERP Admin',
-        description: 'Tiles ERP - Tiles ERP Admin',
+        name: appName,
+        short_name: appShortName,
+        description: `${appName} — administration`,
         theme_color: '#3A57E8',
         background_color: '#ffffff',
         display: 'standalone',
@@ -31,7 +47,15 @@ export default defineConfig({
         icons: [
           { src: 'icons/pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: 'icons/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-          { src: 'icons/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          // A separate file, not the same one reused. Android crops a maskable icon to
+          // a circle or squircle and only guarantees the centre 80%, so this one holds
+          // the artwork further in; using the 'any' icon here clips its edges.
+          {
+            src: 'icons/pwa-maskable-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
         ],
       },
       workbox: {

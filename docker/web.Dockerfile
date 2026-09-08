@@ -14,6 +14,12 @@ ARG VITE_API_URL=""
 ARG VITE_APP_ENV="production"
 ENV VITE_API_URL=${VITE_API_URL}
 ENV VITE_APP_ENV=${VITE_APP_ENV}
+# The installed app's name, written into the PWA manifest at build time. The app.name
+# setting cannot reach it — a manifest is read once, when the app is installed.
+ARG VITE_APP_NAME=""
+ARG VITE_APP_SHORT_NAME=""
+ENV VITE_APP_NAME=${VITE_APP_NAME}
+ENV VITE_APP_SHORT_NAME=${VITE_APP_SHORT_NAME}
 # Cap the heap so a small VPS swaps instead of getting the build OOM-killed.
 # Node's default on a 4 GB box is ~2 GB, which Vite + AG Grid + MUI can exceed.
 ARG NODE_MAX_OLD_SPACE=2048

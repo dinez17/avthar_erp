@@ -39,6 +39,10 @@ export class PrismaUsersRepository implements UsersRepository {
   async list(query: PaginationQuery): Promise<Paginated<UserListItem>> {
     const where: Prisma.UserWhereInput = {
       deletedAt: null,
+      // Maintenance accounts are deliberately absent from this list. They belong to
+      // whoever runs the system, not to the business using it, and an admin tidying
+      // up should never be in a position to delete one by mistake.
+      isHidden: false,
       ...(query.search
         ? {
             OR: [
@@ -72,6 +76,9 @@ export class PrismaUsersRepository implements UsersRepository {
       where: {
         deletedAt: null,
         isActive: true,
+        // A maintenance login is not a salesman, and must not be selectable as one on
+        // a quotation or an order.
+        isHidden: false,
         roles: { some: { role: { isSalesRole: true, deletedAt: null } } },
       },
       select: { id: true, firstName: true, lastName: true, email: true },

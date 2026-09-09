@@ -26,6 +26,17 @@ model User {
   lastName     String
   isActive     Boolean @default(true)
 
+  /// Kept out of the user list and the salesman pickers.
+  ///
+  /// For maintenance accounts that belong to whoever runs the system rather than to
+  /// the business using it — there to fix things, not to be managed alongside staff,
+  /// and not to be deleted by an admin tidying up.
+  ///
+  /// It hides the ROW, never the ACTIVITY: a hidden user's actions are audited like
+  /// anyone else's. An account whose work left no trace would be a back door, not a
+  /// maintenance login.
+  isHidden     Boolean @default(false)
+
   roles          UserRole[]
   branches       UserBranch[]
   departments    UserDepartment[]

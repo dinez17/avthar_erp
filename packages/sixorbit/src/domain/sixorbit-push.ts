@@ -181,9 +181,19 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     attributes: input.attributes.map((a) => ({ aid: a.aid, avid: a.avid })),
   };
 
-  // Defaults for the flags their form sends. Chosen to match what an ordinary stocked tile
-  // looks like in their own data rather than invented. An edit lays whatever they gave us
-  // over these, so a default only applies where they have told us nothing.
+  /**
+   * Every field their edit form expects, at a neutral value.
+   *
+   * These are DEFAULTS, not decoration: SixOrbit supplied the required field list on
+   * 2026-09-08, and a field we leave out is simply absent from the form submit. Relying
+   * on CARRIED_FORWARD for them was the mistake — that only preserves what the imported
+   * record already had, so a product whose SixOrbit row had no `shelf` or `min_discount`
+   * silently posted an incomplete form. An edit still lays their own values over these,
+   * so a default only applies where they have told us nothing.
+   *
+   * Values are neutral rather than invented. We do not model shelf, material, cess or
+   * discount ceilings, and guessing at them would write fiction into their catalogue.
+   */
   const defaults: Record<string, unknown> = {
     item_type: 'Closed Stock',
     product_type: 'Product',
@@ -194,6 +204,17 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     company: '',
     default_vendor: '',
     rack_code: '',
+    // Their e-commerce linkage. Empty unless the imported record carried one.
+    e_commerce_id: '',
+    // Discount ceilings and cess: not modelled here, so left clear rather than guessed.
+    min_discount: '',
+    max_discount: '',
+    item_cess: '0',
+    // Warehouse shelf and material code — SixOrbit master data we do not mirror.
+    shelf: '',
+    material: '',
+    // Pairs with `pcount: ['1']`, so one unit per count.
+    pcount_qty: '1',
     // Present in their edit form and sent as "0" there. Meaning undocumented — they
     // look like flags for "this is the default unit / the default price basis". Sent
     // as their own sample sends them rather than guessed at.

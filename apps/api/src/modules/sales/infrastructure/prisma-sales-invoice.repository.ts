@@ -1197,12 +1197,15 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       const subTotal = round2(returnLines.reduce((sum, line) => sum + line.lineSubTotal, 0));
       const gstAmount = round2(returnLines.reduce((sum, line) => sum + line.lineGst, 0));
       const grandTotal = round2(returnLines.reduce((sum, line) => sum + line.lineTotal, 0));
-      const outstanding = round2(
-        Number(invoice.grandTotal) - Number(invoice.paidAmount) - Number(invoice.returnedAmount),
+      // A payment settles money; it does not remove the customer's right to return the
+      // goods. Limit returns by the invoice value not already returned. When the invoice
+      // was paid, the credit note is available through the refund workflow.
+      const returnableValue = round2(
+        Number(invoice.grandTotal) - Number(invoice.returnedAmount),
       );
-      if (grandTotal > outstanding + 0.01) {
+      if (grandTotal > returnableValue + 0.01) {
         throw new ValidationError(
-          `Return value ${grandTotal.toFixed(2)} exceeds invoice outstanding ${outstanding.toFixed(2)}. Reverse collections first.`,
+          `Return value ${grandTotal.toFixed(2)} exceeds the remaining returnable invoice value ${returnableValue.toFixed(2)}.`,
         );
       }
 

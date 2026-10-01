@@ -420,7 +420,10 @@ export function SalesReturnsPage(): JSX.Element {
             </Typography>
             <Autocomplete
               options={(returnableInvoices.data?.items ?? []).filter(
-                (invoice) => invoice.grandTotal - invoice.paidAmount - invoice.returnedAmount > 0.005,
+                // Payment does not make sold goods ineligible for return. A fully paid
+                // invoice creates a refundable credit note; only fully returned invoices
+                // should disappear from this picker.
+                (invoice) => invoice.grandTotal - invoice.returnedAmount > 0.005,
               )}
               value={(returnableInvoices.data?.items ?? []).find((invoice) => invoice.id === invoiceId) ?? null}
               onInputChange={(_, value, reason) => {

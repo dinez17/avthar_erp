@@ -55,16 +55,13 @@ export function useSalesInvoicePrint(id: string | null) {
   });
 }
 
-/** Claims and loads a delivery slip. Every user can successfully call this once. */
-export function useDeliverySlipPrint(id: string | null, enabled: boolean) {
-  return useQuery({
-    queryKey: [KEY, id, 'delivery-slip-print'],
-    queryFn: () => apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-print`, {
-      method: 'POST',
-    }),
-    enabled: Boolean(id) && enabled,
-    retry: false,
-    staleTime: Number.POSITIVE_INFINITY,
+/** Claims the one permitted delivery-slip copy at the moment the user presses Print. */
+export function useClaimDeliverySlipPrint() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-print`, {
+        method: 'POST',
+      }),
   });
 }
 

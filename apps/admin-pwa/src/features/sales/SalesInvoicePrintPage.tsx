@@ -6,7 +6,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { amountInWords, formatBoxPieces } from '@tiles-erp/shared';
 import type { SalesInvoiceLineItem, SalesInvoicePrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
-import { useDeliverySlipPrint, useSalesInvoicePrint } from './invoices-api';
+import { useClaimDeliverySlipPrint, useSalesInvoicePrint } from './invoices-api';
 import { PrintLogo } from '../../app/branding';
 
 /** A4/A5 for sheet copies, 80mm and 58mm for the counter roll printers. */
@@ -83,10 +83,9 @@ export function SalesInvoicePrintPage(): JSX.Element {
   );
   const [documentType, setDocumentType] = useState<InvoiceDocument>(initialDocument);
   const [deliveryPrinted, setDeliveryPrinted] = useState(false);
-  const standardPrint = useSalesInvoicePrint(documentType === 'delivery' ? null : (id ?? null));
-  const deliveryPrint = useDeliverySlipPrint(id ?? null, documentType === 'delivery');
-  const activePrint = documentType === 'delivery' ? deliveryPrint : standardPrint;
-  const { data, isLoading, isError, error } = activePrint;
+  const invoicePrint = useSalesInvoicePrint(id ?? null);
+  const claimDeliveryPrint = useClaimDeliverySlipPrint();
+  const { data, isLoading, isError, error } = invoicePrint;
 
   useEffect(() => {
     const style = document.createElement('style');
@@ -118,6 +117,13 @@ export function SalesInvoicePrintPage(): JSX.Element {
         alignItems="center"
         sx={{ p: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}
       >
+        {claimDeliveryPrint.isError && (
+          <Alert severity="error" sx={{ mr: 1 }}>
+            {claimDeliveryPrint.error instanceof Error
+              ? claimDeliveryPrint.error.message
+              : 'The delivery slip could not be printed.'}
+          </Alert>
+        )}
         <Button
           color="inherit"
           startIcon={<ArrowBackIcon />}
@@ -167,13 +173,26 @@ export function SalesInvoicePrintPage(): JSX.Element {
         <Button
           variant="contained"
           startIcon={<PrintIcon />}
-          disabled={documentType === 'delivery' && deliveryPrinted}
+          disabled={documentType === 'delivery' && (deliveryPrinted || claimDeliveryPrint.isPending)}
           onClick={() => {
-            window.print();
-            if (documentType === 'delivery') setDeliveryPrinted(true);
+            if (documentType !== 'delivery') {
+              window.print();
+              return;
+            }
+            if (!id || deliveryPrinted || claimDeliveryPrint.isPending) return;
+
+            // Lock this page immediately. The API claim provides the permanent lock, so
+            // returning to the invoice cannot obtain another copy from cached page data.
+            setDeliveryPrinted(true);
+            void claimDeliveryPrint.mutateAsync(id).then(() => {
+              window.print();
+            }).catch(() => {
+              // Keep the button locked: an uncertain network response may still have
+              // recorded the print claim. A fresh attempt asks the server for the truth.
+            });
           }}
         >
-          Print
+          {documentType === 'delivery' && claimDeliveryPrint.isPending ? 'Preparing…' : 'Print'}
         </Button>
       </Stack>
 

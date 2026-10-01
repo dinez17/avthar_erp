@@ -17,6 +17,11 @@ const relativeTime = (value: string | null): string => {
   return `${Math.floor(minutes / 1440)} day(s) ago`;
 };
 
+const today = (): string => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
 export function SmartStockCheckPage(): JSX.Element {
   const branches = useBranches();
   const [branchId, setBranchId] = useSessionBranchId();
@@ -24,7 +29,8 @@ export function SmartStockCheckPage(): JSX.Element {
   const [mode, setMode] = useState('PRIORITY');
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(100);
-  const queue = useSmartStockCheck(branchId, intervalMinutes, mode, search, limit);
+  const [billedDate, setBilledDate] = useState(today);
+  const queue = useSmartStockCheck(branchId, intervalMinutes, mode, search, limit, billedDate);
   const confirm = useVerifySmartStock();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +61,9 @@ export function SmartStockCheckPage(): JSX.Element {
           </TextField>
           <TextField select label="Products" size="small" value={mode} onChange={(e) => setMode(e.target.value)} sx={{ minWidth: 190 }}>
             <MenuItem value="PRIORITY">Needs display update</MenuItem><MenuItem value="RECENT">Recently billed / moved</MenuItem><MenuItem value="RANDOM">Random review</MenuItem>
+            <MenuItem value="BILLED">Billed on selected date</MenuItem>
           </TextField>
+          {mode === 'BILLED' && <TextField type="date" label="Billed date" size="small" value={billedDate} onChange={(e) => setBilledDate(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />}
           <TextField label="Search product" size="small" value={search} onChange={(e) => setSearch(e.target.value)} />
           <TextField select label="Show" size="small" value={limit} onChange={(e) => setLimit(Number(e.target.value))} sx={{ minWidth: 110 }}>
             <MenuItem value={50}>50</MenuItem><MenuItem value={100}>100</MenuItem><MenuItem value={200}>200</MenuItem><MenuItem value={500}>500</MenuItem>
@@ -81,6 +89,7 @@ export function SmartStockCheckPage(): JSX.Element {
                 <Stack direction="row" spacing={1} mt={1} flexWrap="wrap" useFlexGap>
                   <Chip size="small" color={row.due ? 'warning' : 'success'} label={row.lastCheckedAt ? `Board updated ${relativeTime(row.lastCheckedAt)}` : 'Board update not recorded'} />
                   {row.lastMovementAt && <Chip size="small" variant="outlined" label={`Stock changed ${relativeTime(row.lastMovementAt)}`} />}
+                  {row.lastBilledAt && <Chip size="small" variant="outlined" color="primary" label={`Billed ${relativeTime(row.lastBilledAt)}`} />}
                 </Stack>
               </Box>
               <Box sx={{ textAlign: { xs: 'left', md: 'right' }, minWidth: 210 }}>

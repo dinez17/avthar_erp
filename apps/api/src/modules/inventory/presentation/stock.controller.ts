@@ -56,7 +56,9 @@ export class StockController {
     });
     const productIds = balances.map((row) => row.productId);
     const search = query.search?.trim();
-    const [products, checks, movements] = await Promise.all([
+    const billedFrom = query.billedDate ? new Date(`${query.billedDate.slice(0, 10)}T00:00:00+05:30`) : null;
+    const billedTo = billedFrom ? new Date(billedFrom.getTime() + 86_400_000) : null;
+    const [products, checks, movements, billedLines] = await Promise.all([
       this.prisma.product.findMany({
         where: {
           id: { in: productIds }, deletedAt: null,
@@ -79,10 +81,30 @@ export class StockController {
         distinct: ['productId'],
         select: { productId: true, createdAt: true },
       }),
+      query.mode === 'BILLED' && billedFrom && billedTo
+        ? this.prisma.salesInvoiceLine.findMany({
+            where: {
+              productId: { in: productIds },
+              salesInvoice: {
+                branchId: query.branchId,
+                deletedAt: null,
+                status: 'POSTED',
+                invoiceDate: { gte: billedFrom, lt: billedTo },
+              },
+            },
+            select: { productId: true, salesInvoice: { select: { postedAt: true, createdAt: true } } },
+          })
+        : Promise.resolve([]),
     ]);
     const qty = new Map(balances.map((row) => [row.productId, Number(row._sum.qtyBoxes ?? 0)]));
     const checked = new Map(checks.map((row) => [row.productId, row]));
     const moved = new Map(movements.map((row) => [row.productId, row.createdAt]));
+    const billed = new Map<string, Date>();
+    for (const line of billedLines) {
+      const at = line.salesInvoice.postedAt ?? line.salesInvoice.createdAt;
+      const previous = billed.get(line.productId);
+      if (!previous || at > previous) billed.set(line.productId, at);
+    }
     const cutoff = Date.now() - query.intervalMinutes * 60_000;
     const rows = products.map((product) => {
       const last = checked.get(product.id);
@@ -96,10 +118,16 @@ export class StockController {
         lastCountedQtyBoxes: last ? Number(last.countedQtyBoxes) : null,
         lastDifferenceBoxes: last ? Number(last.differenceBoxes) : null,
         lastMovementAt,
+        lastBilledAt: billed.get(product.id) ?? null,
         due: !last || last.checkedAt.getTime() <= cutoff
           || Boolean(lastMovementAt && lastMovementAt > last.checkedAt),
       };
     });
+    if (query.mode === 'BILLED') {
+      const billedRows = rows.filter((row) => row.lastBilledAt);
+      billedRows.sort((a, b) => (b.lastBilledAt?.getTime() ?? 0) - (a.lastBilledAt?.getTime() ?? 0));
+      return { items: billedRows.slice(0, query.limit), totalProducts: billedRows.length, dueProducts: billedRows.filter((row) => row.due).length };
+    }
     if (query.mode === 'RANDOM') rows.sort(() => Math.random() - 0.5);
     else if (query.mode === 'RECENT') rows.sort((a, b) => (b.lastMovementAt?.getTime() ?? 0) - (a.lastMovementAt?.getTime() ?? 0));
     else rows.sort((a, b) => Number(b.due) - Number(a.due)

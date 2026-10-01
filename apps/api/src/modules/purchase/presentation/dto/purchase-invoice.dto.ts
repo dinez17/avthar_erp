@@ -35,7 +35,7 @@ export class PurchaseInvoiceLineDto {
 
   @ApiProperty({ example: 850 })
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsNumber({ maxDecimalPlaces: 8 })
   @Min(0)
   rate!: number;
 

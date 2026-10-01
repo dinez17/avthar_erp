@@ -1221,7 +1221,7 @@ model PurchaseInvoiceLine {
   productId String @db.Uuid
 
   qtyBoxes    Decimal @db.Decimal(14, 3)
-  rate        Decimal @db.Decimal(12, 2)
+  rate        Decimal @db.Decimal(14, 8)
   discountPct Decimal @default(0) @db.Decimal(5, 2)
   gstRate     Decimal @db.Decimal(5, 2)
 

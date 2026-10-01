@@ -55,7 +55,10 @@ const rateFromTotal = (total: string, line: DraftLine): string => {
   const amount = Number(total || 0);
   const discountFactor = 1 - Number(line.discountPct || 0) / 100;
   if (qty <= 0 || amount < 0 || discountFactor <= 0) return line.rate;
-  return String(Math.round((amount / qty / discountFactor) * 1_000_000) / 1_000_000);
+  // A supplier's two-decimal line total does not always divide into a two-decimal unit
+  // rate (for example 178,243.50 / 20 = 8,912.175). Keep enough precision for the
+  // server to reproduce the entered bill total exactly.
+  return String(Math.round((amount / qty / discountFactor) * 100_000_000) / 100_000_000);
 };
 
 const money = (value: number): string =>
@@ -425,6 +428,7 @@ export function PurchaseInvoiceDialog({
               <TextField
                 label="Rate ₹"
                 type="number"
+                inputProps={{ step: 'any' }}
                 size="small"
                 fullWidth={false}
                 value={line.rate}

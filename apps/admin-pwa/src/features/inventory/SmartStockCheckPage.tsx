@@ -23,7 +23,8 @@ export function SmartStockCheckPage(): JSX.Element {
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [mode, setMode] = useState('PRIORITY');
   const [search, setSearch] = useState('');
-  const queue = useSmartStockCheck(branchId, intervalMinutes, mode, search);
+  const [limit, setLimit] = useState(100);
+  const queue = useSmartStockCheck(branchId, intervalMinutes, mode, search, limit);
   const confirm = useVerifySmartStock();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +57,9 @@ export function SmartStockCheckPage(): JSX.Element {
             <MenuItem value="PRIORITY">Needs display update</MenuItem><MenuItem value="RECENT">Recently billed / moved</MenuItem><MenuItem value="RANDOM">Random review</MenuItem>
           </TextField>
           <TextField label="Search product" size="small" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <TextField select label="Show" size="small" value={limit} onChange={(e) => setLimit(Number(e.target.value))} sx={{ minWidth: 110 }}>
+            <MenuItem value={50}>50</MenuItem><MenuItem value={100}>100</MenuItem><MenuItem value={200}>200</MenuItem><MenuItem value={500}>500</MenuItem>
+          </TextField>
           <Button startIcon={<RefreshIcon />} onClick={() => void queue.refetch()}>Refresh</Button>
         </Stack>
       </CardContent></Card>

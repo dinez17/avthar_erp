@@ -99,6 +99,12 @@ export class SmartStockCheckQueryDto {
   @Max(1440)
   intervalMinutes = 60;
 
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 0 })
+  @Min(10)
+  @Max(500)
+  limit = 100;
+
   @IsIn(['PRIORITY', 'RANDOM', 'RECENT'])
   @IsOptional()
   mode?: 'PRIORITY' | 'RANDOM' | 'RECENT';

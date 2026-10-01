@@ -105,7 +105,7 @@ export class StockController {
     else rows.sort((a, b) => Number(b.due) - Number(a.due)
       || (a.lastCheckedAt?.getTime() ?? 0) - (b.lastCheckedAt?.getTime() ?? 0)
       || (b.lastMovementAt?.getTime() ?? 0) - (a.lastMovementAt?.getTime() ?? 0));
-    return { items: rows.slice(0, 30), totalProducts: rows.length, dueProducts: rows.filter((row) => row.due).length };
+    return { items: rows.slice(0, query.limit), totalProducts: rows.length, dueProducts: rows.filter((row) => row.due).length };
   }
 
   @Post('smart-check')

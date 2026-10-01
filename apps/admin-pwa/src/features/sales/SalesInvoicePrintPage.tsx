@@ -6,8 +6,10 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { amountInWords, formatBoxPieces } from '@tiles-erp/shared';
 import type { SalesInvoiceLineItem, SalesInvoicePrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
-import { useClaimDeliverySlipPrint, useSalesInvoicePrint } from './invoices-api';
+import { useClaimDeliverySlipPrint, useDeliverySlipPreview, useSalesInvoicePrint } from './invoices-api';
 import { PrintLogo } from '../../app/branding';
+import { useAuth } from '../../auth/AuthProvider';
+import { PERMISSIONS } from '@tiles-erp/config';
 
 /** A4/A5 for sheet copies, 80mm and 58mm for the counter roll printers. */
 type PaperSize = 'A4' | 'A5' | '80mm' | '58mm';
@@ -68,10 +70,17 @@ const pageStyle = (paper: PaperSize): string => {
 export function SalesInvoicePrintPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user, hasPermission } = useAuth();
   const [searchParams] = useSearchParams();
   const requested = searchParams.get('paper');
   const requestedDocument = searchParams.get('document');
-  const initialDocument = isInvoiceDocument(requestedDocument) ? requestedDocument : 'tax';
+  const canPrintDeliverySlip = hasPermission(PERMISSIONS.DELIVERY_SLIP_PRINT);
+  const deliveryOnlyUser = Boolean(
+    user?.roles.includes('DELIVERY SLIP PRINT') &&
+    !user.roles.some((role) => role !== 'DELIVERY SLIP PRINT'),
+  );
+  const requestedType = isInvoiceDocument(requestedDocument) ? requestedDocument : 'tax';
+  const initialDocument = deliveryOnlyUser ? 'delivery' : requestedType;
   const [paper, setPaper] = useState<PaperSize>(
     isPaperSize(requested)
       ? requested
@@ -83,9 +92,11 @@ export function SalesInvoicePrintPage(): JSX.Element {
   );
   const [documentType, setDocumentType] = useState<InvoiceDocument>(initialDocument);
   const [deliveryPrinted, setDeliveryPrinted] = useState(false);
-  const invoicePrint = useSalesInvoicePrint(id ?? null);
+  const invoicePrint = useSalesInvoicePrint(documentType === 'delivery' ? null : (id ?? null));
+  const deliveryPreview = useDeliverySlipPreview(documentType === 'delivery' ? (id ?? null) : null);
   const claimDeliveryPrint = useClaimDeliverySlipPrint();
-  const { data, isLoading, isError, error } = invoicePrint;
+  const activePrint = documentType === 'delivery' ? deliveryPreview : invoicePrint;
+  const { data, isLoading, isError, error } = activePrint;
 
   useEffect(() => {
     const style = document.createElement('style');
@@ -127,7 +138,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
         <Button
           color="inherit"
           startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/sales-invoices')}
+          onClick={() => navigate(deliveryOnlyUser ? '/delivery-slips' : '/sales-invoices')}
         >
           Back
         </Button>
@@ -147,7 +158,11 @@ export function SalesInvoicePrintPage(): JSX.Element {
           }}
           sx={{ width: 190 }}
         >
-          {(Object.keys(DOCUMENT_LABELS) as InvoiceDocument[]).map((type) => (
+          {(Object.keys(DOCUMENT_LABELS) as InvoiceDocument[]).filter((type) =>
+            deliveryOnlyUser
+              ? type === 'delivery'
+              : type !== 'delivery' || canPrintDeliverySlip,
+          ).map((type) => (
             <MenuItem key={type} value={type}>
               {DOCUMENT_LABELS[type]}
             </MenuItem>
@@ -173,7 +188,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
         <Button
           variant="contained"
           startIcon={<PrintIcon />}
-          disabled={documentType === 'delivery' && (deliveryPrinted || claimDeliveryPrint.isPending)}
+          disabled={documentType === 'delivery' && (!canPrintDeliverySlip || deliveryPrinted || claimDeliveryPrint.isPending)}
           onClick={() => {
             if (documentType !== 'delivery') {
               window.print();

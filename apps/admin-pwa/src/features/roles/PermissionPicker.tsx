@@ -15,7 +15,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 type Section = 'Sales' | 'Purchase' | 'Inventory' | 'Dispatch' | 'Accounts & reports' | 'CRM' | 'Products & parties' | 'Administration' | 'SixOrbit';
 const SECTION_ORDER: Section[] = ['Sales', 'Purchase', 'Inventory', 'Dispatch', 'Accounts & reports', 'CRM', 'Products & parties', 'Administration', 'SixOrbit'];
 const SECTION_RESOURCES: Record<Section, string[]> = {
-  Sales: ['quotation', 'salesOrder', 'salesInvoice', 'receipt', 'customer', 'creditApproval', 'sales'],
+  Sales: ['quotation', 'salesOrder', 'salesInvoice', 'deliverySlip', 'receipt', 'customer', 'creditApproval', 'sales'],
   Purchase: ['purchaseOrder', 'grn', 'purchaseInvoice', 'purchaseReturn', 'supplierPayment', 'supplier'],
   Inventory: ['stock', 'stockTransfer'],
   Dispatch: ['gatePass', 'dispatchReport', 'driverCash'],
@@ -26,7 +26,7 @@ const SECTION_RESOURCES: Record<Section, string[]> = {
   SixOrbit: ['sixorbit'],
 };
 const RESOURCE_NAMES: Record<string, string> = {
-  salesOrder: 'Sales orders', salesInvoice: 'Sales invoices', receipt: 'Collections',
+  salesOrder: 'Sales orders', salesInvoice: 'Sales invoices', deliverySlip: 'Delivery slips', receipt: 'Collections',
   customer: 'Customers', supplierPayment: 'Supplier payments', purchaseOrder: 'Purchase orders',
   purchaseInvoice: 'Purchase invoices', purchaseReturn: 'Purchase returns', grn: 'Goods receipts',
   stock: 'Stock', stockTransfer: 'Stock transfers', gatePass: 'Gate passes',
@@ -47,6 +47,7 @@ const ACTION_NAMES: Record<string, string> = {
   ledgerRead: 'View ledger', creditApprove: 'Approve credit exception',
   overridePrice: 'Override minimum price', sellBelowCost: 'Sell below cost',
   request: 'Request approval', approveL1: 'First-level approval',
+  print: 'View and print',
   approveL2: 'Second-level approval', approveL3: 'Final approval',
 };
 

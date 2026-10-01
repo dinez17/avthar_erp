@@ -64,6 +64,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { label: 'Quotations', path: '/quotations' },
           { label: 'Sales orders', path: '/sales-orders' },
           { label: 'Sales invoices', path: '/sales-invoices' },
+          { label: 'Delivery slips', path: '/delivery-slips' },
           { label: 'Product transactions', path: '/reports/product-transactions' },
           { label: 'Fast moving report', path: '/reports/fast-moving' },
           { label: 'Product-wise sales', path: '/reports/product-sales' },

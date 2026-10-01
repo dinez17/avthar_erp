@@ -100,6 +100,7 @@ export function SalesInvoicesPage(): JSX.Element {
   const branches = useBranches();
   const { user, hasPermission } = useAuth();
   const canSyncSixOrbit = hasPermission(PERMISSIONS.SIXORBIT_SYNC);
+  const canPrintDeliverySlip = hasPermission(PERMISSIONS.DELIVERY_SLIP_PRINT);
   const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
   const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [customerId, setCustomerId] = useState('');
@@ -463,7 +464,9 @@ export function SalesInvoicesPage(): JSX.Element {
         anchorEl={printMenu?.anchor ?? null}
         onClose={() => setPrintMenu(null)}
       >
-        {PRINT_OPTIONS.map((option) => (
+        {PRINT_OPTIONS.filter((option) =>
+          option.document !== 'delivery' || canPrintDeliverySlip,
+        ).map((option) => (
           <MenuItem
             key={`${option.document}-${option.paper}`}
             onClick={() => {

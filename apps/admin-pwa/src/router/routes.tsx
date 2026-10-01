@@ -62,6 +62,7 @@ import { CustomerLedgerPage } from '../features/sales/CustomerLedgerPage';
 import { GstSummaryPage } from '../features/sales/GstSummaryPage';
 import { OutstandingPage } from '../features/sales/OutstandingPage';
 import { SalesInvoicesPage } from '../features/sales/SalesInvoicesPage';
+import { DeliverySlipsPage } from '../features/sales/DeliverySlipsPage';
 import { SalesReturnsPage } from '../features/sales/SalesReturnsPage';
 import { SalesReturnPrintPage } from '../features/sales/SalesReturnPrintPage';
 import { SalesOrdersPage } from '../features/sales/SalesOrdersPage';
@@ -184,6 +185,7 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
               { path: 'crm/visits', element: <SalesVisitsPage /> },
               { path: 'sales-orders', element: <SalesOrdersPage /> },
               { path: 'sales-invoices', element: <SalesInvoicesPage /> },
+              { path: 'delivery-slips', element: <DeliverySlipsPage /> },
               { path: 'sales-returns', element: <SalesReturnsPage /> },
               { path: 'gate-passes', element: <GatePassesPage /> },
               { path: 'gate-passes/new', element: <GatePassEntryPage /> },

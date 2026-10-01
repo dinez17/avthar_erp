@@ -25,6 +25,14 @@ export interface SalesInvoiceFilters {
   status?: SalesInvoiceStatus;
 }
 
+export interface DeliverySlipListItem {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  customerName: string;
+  branchName: string;
+}
+
 export function useSalesInvoices(query: PaginationQuery, filters: SalesInvoiceFilters) {
   const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
   if (query.search) params.set('search', query.search);
@@ -52,6 +60,24 @@ export function useSalesInvoicePrint(id: string | null) {
     queryKey: [KEY, id, 'print'],
     queryFn: () => apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/print`),
     enabled: Boolean(id),
+  });
+}
+
+export function useDeliverySlipPreview(id: string | null) {
+  return useQuery({
+    queryKey: [KEY, id, 'delivery-slip-preview'],
+    queryFn: () => apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-preview`),
+    enabled: Boolean(id),
+  });
+}
+
+export function useDeliverySlips(query: PaginationQuery) {
+  const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
+  if (query.search) params.set('search', query.search);
+  return useQuery({
+    queryKey: [KEY, 'delivery-slips', query],
+    queryFn: () => apiFetch<Paginated<DeliverySlipListItem>>(`/sales-invoices/delivery-slips?${params.toString()}`),
+    placeholderData: (previous) => previous,
   });
 }
 

@@ -14,7 +14,9 @@ export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
 
 export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRole, PermissionValue[]> = {
   [SYSTEM_ROLES.SUPER_ADMIN]: ALL_PERMISSIONS,
-  [SYSTEM_ROLES.ADMIN]: ALL_PERMISSIONS,
+  [SYSTEM_ROLES.ADMIN]: ALL_PERMISSIONS.filter(
+    (permission) => permission !== PERMISSIONS.DELIVERY_SLIP_PRINT,
+  ),
   [SYSTEM_ROLES.MANAGER]: [
     PERMISSIONS.USER_READ,
     PERMISSIONS.ROLE_READ,

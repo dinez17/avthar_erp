@@ -6,6 +6,7 @@ export const MENU_PERMISSIONS: Record<string, PermissionValue> = {
   '/quotations': PERMISSIONS.QUOTATION_READ,
   '/sales-orders': PERMISSIONS.SALES_ORDER_READ,
   '/sales-invoices': PERMISSIONS.SALES_INVOICE_READ,
+  '/delivery-slips': PERMISSIONS.DELIVERY_SLIP_PRINT,
   '/sales-returns': PERMISSIONS.SALES_INVOICE_READ,
   '/collections': PERMISSIONS.RECEIPT_READ,
   '/outstanding': PERMISSIONS.CUSTOMER_LEDGER_READ,

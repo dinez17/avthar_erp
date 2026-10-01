@@ -82,6 +82,14 @@ const canOverrideCredit = (user: AuthenticatedUser): boolean =>
   user.roles.includes('SUPER_ADMIN') ||
   user.permissions.includes(PERMISSIONS.CUSTOMER_CREDIT_APPROVE);
 
+interface DeliverySlipListItem {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  customerName: string;
+  branchName: string;
+}
+
 @ApiTags('Sales invoices')
 @ApiBearerAuth()
 @Controller('sales-invoices')
@@ -92,6 +100,11 @@ export class SalesInvoiceController {
     @Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository,
     @Inject(SALES_ORDER_REPOSITORY) private readonly orders: SalesOrderRepository,
   ) {}
+
+  private mayAccessBranch(user: AuthenticatedUser, branchId: string): boolean {
+    return user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') ||
+      user.branchIds.includes(branchId);
+  }
 
   @Post('transfer-and-invoice/:salesOrderId')
   @HttpCode(HttpStatus.CREATED)
@@ -204,6 +217,35 @@ export class SalesInvoiceController {
     );
   }
 
+  @Get('delivery-slips')
+  @RequirePermissions(PERMISSIONS.DELIVERY_SLIP_PRINT)
+  @ApiOperation({ summary: 'Posted invoices available for authorised delivery-slip printing' })
+  async deliverySlips(
+    @Query() query: SalesInvoiceListQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<Paginated<DeliverySlipListItem>> {
+    const result = await this.queryBus.execute<ListSalesInvoicesQuery, Paginated<SalesInvoiceItem>>(
+      new ListSalesInvoicesQuery(query, {
+        branchIds: user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')
+          ? undefined
+          : user.branchIds,
+        status: 'POSTED',
+        fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
+        toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
+      }),
+    );
+    return {
+      meta: result.meta,
+      items: result.items.map((invoice) => ({
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceDate: invoice.invoiceDate,
+        customerName: invoice.customerName,
+        branchName: invoice.branchName,
+      })),
+    };
+  }
+
   @Get('returns')
   @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
   @RequireBranchScope({ in: 'query' })
@@ -257,13 +299,31 @@ export class SalesInvoiceController {
     return this.queryBus.execute(new SalesInvoicePrintQuery(id));
   }
 
-  @Post(':id/delivery-slip-print')
-  @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
-  @ApiOperation({ summary: 'Issue a delivery slip; every user is limited to one copy' })
-  printDeliverySlip(
+  @Get(':id/delivery-slip-preview')
+  @RequirePermissions(PERMISSIONS.DELIVERY_SLIP_PRINT)
+  @ApiOperation({ summary: 'Preview a delivery slip without consuming its single print' })
+  async previewDeliverySlip(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
+    const data = await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
+      new SalesInvoicePrintQuery(id),
+    );
+    if (!this.mayAccessBranch(user, data.invoice.branchId)) throw new NotFoundError('Sales invoice not found');
+    return data;
+  }
+
+  @Post(':id/delivery-slip-print')
+  @RequirePermissions(PERMISSIONS.DELIVERY_SLIP_PRINT)
+  @ApiOperation({ summary: 'Issue a delivery slip; every user is limited to one copy' })
+  async printDeliverySlip(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SalesInvoicePrintData> {
+    const preview = await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
+      new SalesInvoicePrintQuery(id),
+    );
+    if (!this.mayAccessBranch(user, preview.invoice.branchId)) throw new NotFoundError('Sales invoice not found');
     return this.commandBus.execute(new PrintDeliverySlipCommand(id, user.id));
   }
 

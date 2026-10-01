@@ -145,6 +145,8 @@ export const PERMISSIONS = {
   /// Posting takes the goods out of stock; cancelling puts them back
   SALES_INVOICE_POST: 'salesInvoice:post',
   SALES_INVOICE_CANCEL: 'salesInvoice:cancel',
+  /** View and issue the single permitted godown-wise delivery-slip copy. */
+  DELIVERY_SLIP_PRINT: 'deliverySlip:print',
 
   RECEIPT_CREATE: 'receipt:create',
   RECEIPT_READ: 'receipt:read',

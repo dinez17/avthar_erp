@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import {
   ALL_PERMISSIONS,
+  PERMISSIONS,
   SYSTEM_ROLES,
   SYSTEM_ROLE_PERMISSIONS,
   type SystemRole,
@@ -44,6 +45,20 @@ async function seedRoles(): Promise<void> {
         create: { roleId: role.id, permissionId: permission.id },
       });
     }
+  }
+  // Delivery-slip issuance is deliberately assigned only through its dedicated role.
+  // Remove a mapping left by an older seed where ADMIN inherited every permission.
+  const deliveryPermission = await prisma.permission.findUnique({
+    where: { code: PERMISSIONS.DELIVERY_SLIP_PRINT },
+  });
+  if (deliveryPermission) {
+    const dedicatedRole = await prisma.role.findUnique({ where: { name: 'DELIVERY SLIP PRINT' } });
+    await prisma.rolePermission.deleteMany({
+      where: {
+        permissionId: deliveryPermission.id,
+        ...(dedicatedRole ? { roleId: { not: dedicatedRole.id } } : {}),
+      },
+    });
   }
   console.log(`Seeded ${Object.keys(SYSTEM_ROLES).length} system roles`);
 }

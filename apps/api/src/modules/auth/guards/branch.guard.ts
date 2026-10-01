@@ -22,7 +22,10 @@ export class BranchGuard implements CanActivate {
       .getRequest<{ user?: AuthenticatedUser } & Record<string, Record<string, string>>>();
     const user = request.user;
     if (!user) throw new ForbiddenError('Branch scope denied');
-    if (user.roles.includes(SYSTEM_ROLES.SUPER_ADMIN)) return true;
+    if (
+      user.roles.includes(SYSTEM_ROLES.SUPER_ADMIN) ||
+      user.roles.includes(SYSTEM_ROLES.ADMIN)
+    ) return true;
 
     const branchId = request[source.in]?.[source.key];
     if (!branchId) return true;

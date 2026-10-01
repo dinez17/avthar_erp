@@ -10,10 +10,32 @@ export class PrismaAuditRepository implements AuditRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(query: PaginationQuery, filter: AuditListFilter): Promise<Paginated<AuditLogItem>> {
+    const search = query.search?.trim();
+    const matchingUsers = search
+      ? await this.prisma.user.findMany({
+          where: { email: { contains: search, mode: 'insensitive' } },
+          select: { id: true },
+        })
+      : [];
+    const auditIdFilter = search && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(search)
+      ? [{ id: search }]
+      : [];
     const where: Prisma.AuditLogWhereInput = {
       ...(filter.entity ? { entity: filter.entity } : {}),
       ...(filter.userId ? { userId: filter.userId } : {}),
-      ...(query.search ? { entityId: { contains: query.search, mode: 'insensitive' } } : {}),
+      ...(search
+        ? {
+            OR: [
+              ...auditIdFilter,
+              { entityId: { contains: search, mode: 'insensitive' } },
+              { entity: { contains: search, mode: 'insensitive' } },
+              { action: { contains: search, mode: 'insensitive' } },
+              ...(matchingUsers.length > 0
+                ? [{ userId: { in: matchingUsers.map((user) => user.id) } }]
+                : []),
+            ],
+          }
+        : {}),
     };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.auditLog.findMany({

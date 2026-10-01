@@ -899,7 +899,7 @@ model StockVerification {
 
   productId String @db.Uuid
   branchId  String @db.Uuid
-  godownId  String @db.Uuid
+  godownId  String? @db.Uuid
 
   bookQtyBoxes    Decimal @db.Decimal(14, 3)
   countedQtyBoxes Decimal @db.Decimal(14, 3)
@@ -909,7 +909,7 @@ model StockVerification {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  godown Godown @relation(fields: [godownId], references: [id], onDelete: Restrict)
+  godown Godown? @relation(fields: [godownId], references: [id], onDelete: Restrict)
 
   @@index([branchId, godownId, checkedAt])
   @@index([productId, branchId, godownId, checkedAt])

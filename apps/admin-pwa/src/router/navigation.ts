@@ -100,7 +100,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { label: 'Stock check', path: '/stock/check' },
           { label: 'Product stock check', path: '/stock/product-check' },
           { label: 'Stock count', path: '/stock/count' },
-          { label: 'Smart stock check', path: '/stock/smart-check' },
+          { label: 'Showroom stock display', path: '/stock/smart-check' },
           { label: 'Transfers', path: '/stock/transfers' },
           { label: 'Stock reports', path: '/stock/reports' },
           { label: 'Product audit', path: '/product-audit' },

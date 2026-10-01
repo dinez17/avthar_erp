@@ -45,19 +45,13 @@ export class StockController {
   ) {}
 
   @Get('smart-check')
-  @RequirePermissions(PERMISSIONS.STOCK_ADJUST)
+  @RequirePermissions(PERMISSIONS.STOCK_READ)
   @RequireBranchScope({ in: 'query' })
-  @ApiOperation({ summary: 'Short prioritized queue for recurring physical stock checks' })
+  @ApiOperation({ summary: 'Branch stock changes waiting to be copied to the showroom display' })
   async smartCheck(@Query() query: SmartStockCheckQueryDto) {
-    const godown = await this.prisma.godown.findFirst({
-      where: { id: query.godownId, branchId: query.branchId, deletedAt: null, isActive: true },
-      select: { id: true },
-    });
-    if (!godown) throw new ValidationError('Godown does not belong to the selected branch');
-
     const balances = await this.prisma.stockBalance.groupBy({
       by: ['productId'],
-      where: { branchId: query.branchId, godownId: query.godownId, qtyBoxes: { gt: 0 } },
+      where: { branchId: query.branchId, godown: { deletedAt: null, isActive: true } },
       _sum: { qtyBoxes: true },
     });
     const productIds = balances.map((row) => row.productId);
@@ -74,13 +68,13 @@ export class StockController {
         select: { id: true, sku: true, name: true, sizeMm: true, piecesPerBox: true, baseUom: true, brand: { select: { name: true } } },
       }),
       this.prisma.stockVerification.findMany({
-        where: { branchId: query.branchId, godownId: query.godownId, productId: { in: productIds } },
+        where: { branchId: query.branchId, godownId: null, productId: { in: productIds } },
         orderBy: { checkedAt: 'desc' },
         distinct: ['productId'],
         select: { productId: true, checkedAt: true, countedQtyBoxes: true, differenceBoxes: true },
       }),
       this.prisma.stockMovement.findMany({
-        where: { branchId: query.branchId, godownId: query.godownId, productId: { in: productIds } },
+        where: { branchId: query.branchId, productId: { in: productIds } },
         orderBy: { createdAt: 'desc' },
         distinct: ['productId'],
         select: { productId: true, createdAt: true },
@@ -102,7 +96,8 @@ export class StockController {
         lastCountedQtyBoxes: last ? Number(last.countedQtyBoxes) : null,
         lastDifferenceBoxes: last ? Number(last.differenceBoxes) : null,
         lastMovementAt,
-        due: !last || last.checkedAt.getTime() <= cutoff,
+        due: !last || last.checkedAt.getTime() <= cutoff
+          || Boolean(lastMovementAt && lastMovementAt > last.checkedAt),
       };
     });
     if (query.mode === 'RANDOM') rows.sort(() => Math.random() - 0.5);
@@ -115,33 +110,24 @@ export class StockController {
 
   @Post('smart-check')
   @HttpCode(HttpStatus.CREATED)
-  @RequirePermissions(PERMISSIONS.STOCK_ADJUST)
+  @RequirePermissions(PERMISSIONS.STOCK_READ)
   @RequireBranchScope({ in: 'body' })
-  @ApiOperation({ summary: 'Record a physical check and adjust stock when it differs' })
+  @ApiOperation({ summary: 'Record that branch stock was copied to the showroom display' })
   async verifySmartStock(@Body() dto: VerifySmartStockDto, @CurrentUser('id') actorId: string) {
     const [product, balance] = await Promise.all([
-      this.prisma.product.findFirst({ where: { id: dto.productId, deletedAt: null }, select: { piecesPerBox: true } }),
+      this.prisma.product.findFirst({ where: { id: dto.productId, deletedAt: null }, select: { id: true } }),
       this.prisma.stockBalance.aggregate({
-        where: { productId: dto.productId, branchId: dto.branchId, godownId: dto.godownId },
+        where: { productId: dto.productId, branchId: dto.branchId, godown: { deletedAt: null, isActive: true } },
         _sum: { qtyBoxes: true },
       }),
     ]);
     if (!product) throw new ValidationError('Product not found');
     const bookQtyBoxes = Number(balance._sum.qtyBoxes ?? 0);
-    const countedQtyBoxes = Math.round((dto.boxes + dto.pieces / Math.max(1, product.piecesPerBox)) * 1000) / 1000;
-    const differenceBoxes = Math.round((countedQtyBoxes - bookQtyBoxes) * 1000) / 1000;
-    if (differenceBoxes !== 0) {
-      await this.commandBus.execute(new BulkSetStockCommand({
-        branchId: dto.branchId, godownId: dto.godownId,
-        reason: 'Smart physical stock verification',
-        lines: [{ productId: dto.productId, boxes: dto.boxes, pieces: dto.pieces }],
-      }, actorId));
-    }
     const verification = await this.prisma.stockVerification.create({ data: {
-      productId: dto.productId, branchId: dto.branchId, godownId: dto.godownId,
-      bookQtyBoxes, countedQtyBoxes, differenceBoxes, checkedBy: actorId,
+      productId: dto.productId, branchId: dto.branchId, godownId: null,
+      bookQtyBoxes, countedQtyBoxes: bookQtyBoxes, differenceBoxes: 0, checkedBy: actorId,
     } });
-    return { id: verification.id, bookQtyBoxes, countedQtyBoxes, differenceBoxes, adjusted: differenceBoxes !== 0 };
+    return { id: verification.id, bookQtyBoxes };
   }
 
   @Get('check/product/:productId')

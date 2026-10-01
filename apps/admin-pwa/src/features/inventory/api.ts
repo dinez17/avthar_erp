@@ -183,13 +183,13 @@ export interface SmartStockCheckResponse {
   dueProducts: number;
 }
 
-export function useSmartStockCheck(branchId: string, godownId: string, intervalMinutes: number, mode: string, search: string) {
-  const params = new URLSearchParams({ branchId, godownId, intervalMinutes: String(intervalMinutes), mode });
+export function useSmartStockCheck(branchId: string, intervalMinutes: number, mode: string, search: string) {
+  const params = new URLSearchParams({ branchId, intervalMinutes: String(intervalMinutes), mode });
   if (search.trim()) params.set('search', search.trim());
   return useQuery({
-    queryKey: [KEY, 'smart-check', branchId, godownId, intervalMinutes, mode, search],
+    queryKey: [KEY, 'smart-check', branchId, intervalMinutes, mode, search],
     queryFn: () => apiFetch<SmartStockCheckResponse>(`/stock/smart-check?${params.toString()}`),
-    enabled: Boolean(branchId && godownId),
+    enabled: Boolean(branchId),
     refetchInterval: 30_000,
   });
 }
@@ -197,8 +197,8 @@ export function useSmartStockCheck(branchId: string, godownId: string, intervalM
 export function useVerifySmartStock() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { branchId: string; godownId: string; productId: string; boxes: number; pieces: number }) =>
-      apiFetch<{ adjusted: boolean; differenceBoxes: number }>('/stock/smart-check', {
+    mutationFn: (input: { branchId: string; productId: string }) =>
+      apiFetch<{ bookQtyBoxes: number }>('/stock/smart-check', {
         method: 'POST', body: JSON.stringify(input),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY] }),

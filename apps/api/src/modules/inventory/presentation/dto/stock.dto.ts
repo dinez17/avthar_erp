@@ -93,9 +93,6 @@ export class SmartStockCheckQueryDto {
   @IsUUID('4')
   branchId!: string;
 
-  @IsUUID('4')
-  godownId!: string;
-
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 0 })
   @Min(15)
@@ -117,20 +114,7 @@ export class VerifySmartStockDto {
   branchId!: string;
 
   @IsUUID('4')
-  godownId!: string;
-
-  @IsUUID('4')
   productId!: string;
-
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 3 })
-  @Min(0)
-  boxes!: number;
-
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 3 })
-  @Min(0)
-  pieces!: number;
 }
 
 export class StockMovementQueryDto extends PaginationQueryDto {

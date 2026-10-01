@@ -105,10 +105,6 @@ export class SmartStockCheckQueryDto {
   @Max(500)
   limit = 100;
 
-  @IsIn(['PRIORITY', 'RANDOM', 'RECENT', 'BILLED'])
-  @IsOptional()
-  mode?: 'PRIORITY' | 'RANDOM' | 'RECENT' | 'BILLED';
-
   @IsDateString()
   @IsOptional()
   billedDate?: string;

@@ -26,11 +26,10 @@ export function SmartStockCheckPage(): JSX.Element {
   const branches = useBranches();
   const [branchId, setBranchId] = useSessionBranchId();
   const [intervalMinutes, setIntervalMinutes] = useState(30);
-  const [mode, setMode] = useState('PRIORITY');
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(100);
   const [billedDate, setBilledDate] = useState(today);
-  const queue = useSmartStockCheck(branchId, intervalMinutes, mode, search, limit, billedDate);
+  const queue = useSmartStockCheck(branchId, intervalMinutes, search, limit, billedDate);
   const confirm = useVerifySmartStock();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,11 +58,7 @@ export function SmartStockCheckPage(): JSX.Element {
           <TextField select label="Show again after" size="small" value={intervalMinutes} onChange={(e) => setIntervalMinutes(Number(e.target.value))} sx={{ minWidth: 170 }}>
             <MenuItem value={30}>30 minutes</MenuItem><MenuItem value={60}>1 hour</MenuItem><MenuItem value={120}>2 hours</MenuItem><MenuItem value={480}>8 hours</MenuItem>
           </TextField>
-          <TextField select label="Products" size="small" value={mode} onChange={(e) => setMode(e.target.value)} sx={{ minWidth: 190 }}>
-            <MenuItem value="PRIORITY">Needs display update</MenuItem><MenuItem value="RECENT">Recently billed / moved</MenuItem><MenuItem value="RANDOM">Random review</MenuItem>
-            <MenuItem value="BILLED">Billed on selected date</MenuItem>
-          </TextField>
-          {mode === 'BILLED' && <TextField type="date" label="Billed date" size="small" value={billedDate} onChange={(e) => setBilledDate(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />}
+          <TextField type="date" label="Billed date" size="small" value={billedDate} onChange={(e) => setBilledDate(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
           <TextField label="Search product" size="small" value={search} onChange={(e) => setSearch(e.target.value)} />
           <TextField select label="Show" size="small" value={limit} onChange={(e) => setLimit(Number(e.target.value))} sx={{ minWidth: 110 }}>
             <MenuItem value={50}>50</MenuItem><MenuItem value={100}>100</MenuItem><MenuItem value={200}>200</MenuItem><MenuItem value={500}>500</MenuItem>
@@ -104,7 +99,7 @@ export function SmartStockCheckPage(): JSX.Element {
             </Stack>
           </CardContent></Card>;
         })}</Stack>}
-      <Typography variant="caption" color="text.secondary">Products changed after their last display update appear first.</Typography>
+      <Typography variant="caption" color="text.secondary">Products billed on the selected date appear with the latest billed item first.</Typography>
     </Stack>
   </PageContainer>;
 }

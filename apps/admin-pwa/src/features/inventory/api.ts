@@ -184,12 +184,11 @@ export interface SmartStockCheckResponse {
   dueProducts: number;
 }
 
-export function useSmartStockCheck(branchId: string, intervalMinutes: number, mode: string, search: string, limit: number, billedDate: string) {
-  const params = new URLSearchParams({ branchId, intervalMinutes: String(intervalMinutes), mode, limit: String(limit) });
+export function useSmartStockCheck(branchId: string, intervalMinutes: number, search: string, limit: number, billedDate: string) {
+  const params = new URLSearchParams({ branchId, intervalMinutes: String(intervalMinutes), limit: String(limit), billedDate });
   if (search.trim()) params.set('search', search.trim());
-  if (mode === 'BILLED') params.set('billedDate', billedDate);
   return useQuery({
-    queryKey: [KEY, 'smart-check', branchId, intervalMinutes, mode, search, limit, billedDate],
+    queryKey: [KEY, 'smart-check', branchId, intervalMinutes, search, limit, billedDate],
     queryFn: () => apiFetch<SmartStockCheckResponse>(`/stock/smart-check?${params.toString()}`),
     enabled: Boolean(branchId),
     refetchInterval: 30_000,

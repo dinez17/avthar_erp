@@ -81,7 +81,7 @@ export class StockController {
         distinct: ['productId'],
         select: { productId: true, createdAt: true },
       }),
-      query.mode === 'BILLED' && billedFrom && billedTo
+      billedFrom && billedTo
         ? this.prisma.salesInvoiceLine.findMany({
             where: {
               productId: { in: productIds },
@@ -123,17 +123,9 @@ export class StockController {
           || Boolean(lastMovementAt && lastMovementAt > last.checkedAt),
       };
     });
-    if (query.mode === 'BILLED') {
-      const billedRows = rows.filter((row) => row.lastBilledAt);
-      billedRows.sort((a, b) => (b.lastBilledAt?.getTime() ?? 0) - (a.lastBilledAt?.getTime() ?? 0));
-      return { items: billedRows.slice(0, query.limit), totalProducts: billedRows.length, dueProducts: billedRows.filter((row) => row.due).length };
-    }
-    if (query.mode === 'RANDOM') rows.sort(() => Math.random() - 0.5);
-    else if (query.mode === 'RECENT') rows.sort((a, b) => (b.lastMovementAt?.getTime() ?? 0) - (a.lastMovementAt?.getTime() ?? 0));
-    else rows.sort((a, b) => Number(b.due) - Number(a.due)
-      || (a.lastCheckedAt?.getTime() ?? 0) - (b.lastCheckedAt?.getTime() ?? 0)
-      || (b.lastMovementAt?.getTime() ?? 0) - (a.lastMovementAt?.getTime() ?? 0));
-    return { items: rows.slice(0, query.limit), totalProducts: rows.length, dueProducts: rows.filter((row) => row.due).length };
+    const billedRows = rows.filter((row) => row.lastBilledAt);
+    billedRows.sort((a, b) => (b.lastBilledAt?.getTime() ?? 0) - (a.lastBilledAt?.getTime() ?? 0));
+    return { items: billedRows.slice(0, query.limit), totalProducts: billedRows.length, dueProducts: billedRows.filter((row) => row.due).length };
   }
 
   @Post('smart-check')

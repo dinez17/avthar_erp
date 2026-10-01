@@ -1753,6 +1753,9 @@ model SalesReturn {
   remarks        String?
   subTotal       Decimal  @default(0) @db.Decimal(14, 2)
   gstAmount      Decimal  @default(0) @db.Decimal(14, 2)
+  freightCharge  Decimal  @default(0) @db.Decimal(12, 2)
+  unloadingCharge Decimal @default(0) @db.Decimal(12, 2)
+  loadingCharge  Decimal  @default(0) @db.Decimal(12, 2)
   grandTotal     Decimal  @default(0) @db.Decimal(14, 2)
   createdAt      DateTime @default(now())
   createdBy      String?  @db.Uuid

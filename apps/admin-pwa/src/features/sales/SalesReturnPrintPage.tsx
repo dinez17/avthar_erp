@@ -97,6 +97,9 @@ export function SalesReturnPrintPage(): JSX.Element {
             ))}
             <tr><td colSpan={6} className="num"><strong>Sub total</strong></td><td className="num">{money(returned.subTotal)}</td></tr>
             <tr><td colSpan={6} className="num"><strong>GST</strong></td><td className="num">{money(returned.gstAmount)}</td></tr>
+            {returned.freightCharge > 0 && <tr><td colSpan={6} className="num"><strong>Freight</strong></td><td className="num">{money(returned.freightCharge)}</td></tr>}
+            {returned.unloadingCharge > 0 && <tr><td colSpan={6} className="num"><strong>Unloading</strong></td><td className="num">{money(returned.unloadingCharge)}</td></tr>}
+            {returned.loadingCharge > 0 && <tr><td colSpan={6} className="num"><strong>Loading</strong></td><td className="num">{money(returned.loadingCharge)}</td></tr>}
             <tr><td colSpan={6} className="num"><strong>Total return value</strong></td><td className="num"><strong>{money(returned.grandTotal)}</strong></td></tr>
           </tbody>
         </table>

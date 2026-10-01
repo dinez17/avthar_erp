@@ -418,6 +418,9 @@ export interface SalesInvoiceItem {
   grandTotal: number;
   paidAmount: number;
   returnedAmount: number;
+  returnedFreightCharge: number;
+  returnedUnloadingCharge: number;
+  returnedLoadingCharge: number;
   /** Grand total less collections and posted sales returns. */
   balanceAmount: number;
   remarks: string | null;
@@ -445,6 +448,9 @@ export interface CreateSalesReturnInput {
   reason: string;
   remarks?: string;
   returnDate?: ISODateString;
+  freightCharge?: number;
+  unloadingCharge?: number;
+  loadingCharge?: number;
   lines: CreateSalesReturnLineInput[];
 }
 
@@ -470,6 +476,9 @@ export interface SalesReturnItem {
   remarks: string | null;
   subTotal: number;
   gstAmount: number;
+  freightCharge: number;
+  unloadingCharge: number;
+  loadingCharge: number;
   grandTotal: number;
   refundedAmount: number;
   refundableAmount: number;

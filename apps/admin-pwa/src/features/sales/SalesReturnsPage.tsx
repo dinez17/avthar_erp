@@ -87,6 +87,7 @@ export function SalesReturnsPage(): JSX.Element {
   const [returnReason, setReturnReason] = useState('');
   const [returnRemarks, setReturnRemarks] = useState('');
   const [returnQty, setReturnQty] = useState<Record<string, { boxes: string; pieces: string }>>({});
+  const [returnCharges, setReturnCharges] = useState({ freight: '', unloading: '', loading: '' });
   const detail = useSalesReturn(viewingId);
   const invoiceDetail = useSalesInvoice(invoiceId || null);
   const createReturn = useCreateSalesReturn();
@@ -126,7 +127,7 @@ export function SalesReturnsPage(): JSX.Element {
   };
 
   const returnValue = useMemo(() => {
-    return (invoiceDetail.data?.lines ?? []).reduce(
+    const itemValue = (invoiceDetail.data?.lines ?? []).reduce(
       (total, line) => {
         const quantity = returnQty[line.id];
         const qtyBoxes = Number(quantity?.boxes || 0)
@@ -143,7 +144,11 @@ export function SalesReturnsPage(): JSX.Element {
       },
       { subTotal: 0, gst: 0, grandTotal: 0 },
     );
-  }, [invoiceDetail.data?.lines, returnQty]);
+    const charges = Number(returnCharges.freight || 0)
+      + Number(returnCharges.unloading || 0)
+      + Number(returnCharges.loading || 0);
+    return { ...itemValue, charges, grandTotal: itemValue.grandTotal + charges };
+  }, [invoiceDetail.data?.lines, returnCharges, returnQty]);
 
   useEffect(() => {
     if (!canChangeBranch && user?.branchIds.length) {
@@ -169,6 +174,7 @@ export function SalesReturnsPage(): JSX.Element {
     setReturnReason('');
     setReturnRemarks('');
     setReturnQty({});
+    setReturnCharges({ freight: '', unloading: '', loading: '' });
   };
 
   const submitReturn = async (): Promise<void> => {
@@ -185,6 +191,9 @@ export function SalesReturnsPage(): JSX.Element {
         id: invoiceId,
         reason: returnReason,
         remarks: returnRemarks || undefined,
+        freightCharge: Number(returnCharges.freight || 0),
+        unloadingCharge: Number(returnCharges.unloading || 0),
+        loadingCharge: Number(returnCharges.loading || 0),
         lines,
       });
       closeCreate();
@@ -362,6 +371,9 @@ export function SalesReturnsPage(): JSX.Element {
               <Stack direction="row" spacing={3} justifyContent="flex-end">
                 <Typography variant="body2">Sub total: {money(detail.data.subTotal)}</Typography>
                 <Typography variant="body2">GST: {money(detail.data.gstAmount)}</Typography>
+                <Typography variant="body2">
+                  Charges: {money(detail.data.freightCharge + detail.data.unloadingCharge + detail.data.loadingCharge)}
+                </Typography>
                 <Typography variant="subtitle2">Credit note: {money(detail.data.grandTotal)}</Typography>
               </Stack>
             </Stack>
@@ -437,6 +449,7 @@ export function SalesReturnsPage(): JSX.Element {
               onChange={(_, invoice) => {
                 setInvoiceId(invoice?.id ?? '');
                 setReturnQty({});
+                setReturnCharges({ freight: '', unloading: '', loading: '' });
               }}
               noOptionsText="No posted invoice found"
               renderInput={(params) => (
@@ -491,9 +504,35 @@ export function SalesReturnsPage(): JSX.Element {
                   })}
                 </TableBody>
               </Table>
+              <Box sx={{ px: 2, pt: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>Return freight and handling charges</Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                  {([
+                    ['freight', 'Freight', Math.max(0, invoiceDetail.data.freightCharge - invoiceDetail.data.returnedFreightCharge)],
+                    ['unloading', 'Unloading', Math.max(0, invoiceDetail.data.unloadingCharge - invoiceDetail.data.returnedUnloadingCharge)],
+                    ['loading', 'Loading', Math.max(0, invoiceDetail.data.loadingCharge - invoiceDetail.data.returnedLoadingCharge)],
+                  ] as const).map(([key, label, available]) => (
+                    <TextField
+                      key={key}
+                      size="small"
+                      type="number"
+                      label={`${label} (available ${money(available)})`}
+                      value={returnCharges[key]}
+                      disabled={available <= 0}
+                      inputProps={{ min: 0, max: available, step: 0.01 }}
+                      onChange={(event) => setReturnCharges((current) => ({
+                        ...current,
+                        [key]: event.target.value,
+                      }))}
+                      sx={{ flex: 1 }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
               <Stack direction="row" spacing={3} justifyContent="flex-end" sx={{ px: 2, py: 1.5 }}>
                 <Typography variant="body2">Sub total: {money(returnValue.subTotal)}</Typography>
                 <Typography variant="body2">GST: {money(returnValue.gst)}</Typography>
+                <Typography variant="body2">Charges: {money(returnValue.charges)}</Typography>
                 <Typography variant="subtitle2">Total return value: {money(returnValue.grandTotal)}</Typography>
               </Stack>
               </Box>
@@ -513,7 +552,7 @@ export function SalesReturnsPage(): JSX.Element {
           <Button
             variant="contained"
             onClick={() => void submitReturn()}
-            disabled={!invoiceId || returnReason.trim().length < 2 || createReturn.isPending}
+            disabled={!invoiceId || returnReason.trim().length < 2 || returnValue.grandTotal <= 0 || createReturn.isPending}
           >
             Post sales return
           </Button>

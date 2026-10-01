@@ -40,6 +40,9 @@ import type {
 const include = {
   branch: { select: { name: true } },
   salesOrder: { select: { orderNumber: true } },
+  returns: {
+    select: { freightCharge: true, unloadingCharge: true, loadingCharge: true },
+  },
   lines: {
     orderBy: { lineNo: 'asc' },
     include: {
@@ -109,6 +112,15 @@ const toItem = (
   const grandTotal = Number(row.grandTotal);
   const paidAmount = Number(row.paidAmount);
   const returnedAmount = Number(row.returnedAmount);
+  const returnedFreightCharge = round2(
+    row.returns.reduce((sum, returned) => sum + Number(returned.freightCharge), 0),
+  );
+  const returnedUnloadingCharge = round2(
+    row.returns.reduce((sum, returned) => sum + Number(returned.unloadingCharge), 0),
+  );
+  const returnedLoadingCharge = round2(
+    row.returns.reduce((sum, returned) => sum + Number(returned.loadingCharge), 0),
+  );
   return {
     id: row.id,
     invoiceNumber: row.invoiceNumber,
@@ -141,6 +153,9 @@ const toItem = (
     grandTotal,
     paidAmount,
     returnedAmount,
+    returnedFreightCharge,
+    returnedUnloadingCharge,
+    returnedLoadingCharge,
     balanceAmount: round2(grandTotal - paidAmount - returnedAmount),
     remarks: row.remarks,
     cancelReason: row.cancelReason,
@@ -667,6 +682,9 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
         remarks: row.remarks,
         subTotal: Number(row.subTotal),
         gstAmount: Number(row.gstAmount),
+        freightCharge: Number(row.freightCharge),
+        unloadingCharge: Number(row.unloadingCharge),
+        loadingCharge: Number(row.loadingCharge),
         grandTotal,
         refundedAmount,
         refundableAmount: round2(grandTotal - refundedAmount),
@@ -735,6 +753,9 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       remarks: row.remarks,
       subTotal: Number(row.subTotal),
       gstAmount: Number(row.gstAmount),
+      freightCharge: Number(row.freightCharge),
+      unloadingCharge: Number(row.unloadingCharge),
+      loadingCharge: Number(row.loadingCharge),
       grandTotal: Number(row.grandTotal),
       refundedAmount,
       refundableAmount: round2(Number(row.grandTotal) - refundedAmount),
@@ -1121,13 +1142,24 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     createdBy: UUID,
   ): Promise<SalesReturnItem> {
     if (!data.reason.trim()) throw new ValidationError('A return reason is required');
-    if (!data.lines.length) throw new ValidationError('Enter a return quantity for at least one item');
+    const requestedFreight = round2(data.freightCharge ?? 0);
+    const requestedUnloading = round2(data.unloadingCharge ?? 0);
+    const requestedLoading = round2(data.loadingCharge ?? 0);
+    if (requestedFreight < 0 || requestedUnloading < 0 || requestedLoading < 0) {
+      throw new ValidationError('Returned charges cannot be negative');
+    }
+    if (!data.lines.length && requestedFreight + requestedUnloading + requestedLoading <= 0) {
+      throw new ValidationError('Enter a return quantity or a freight/handling charge');
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const invoice = await tx.salesInvoice.findFirst({
         where: { id, deletedAt: null },
         include: {
           branch: { select: { name: true } },
+          returns: {
+            select: { freightCharge: true, unloadingCharge: true, loadingCharge: true },
+          },
           lines: {
             include: {
               product: {
@@ -1189,14 +1221,40 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
           source: line,
         }];
       });
-      if (!returnLines.length) throw new ValidationError('Enter a return quantity for at least one item');
       if (returnLines.length !== requested.size) {
         throw new ValidationError('One or more return items do not belong to this invoice');
       }
 
+      const alreadyReturnedFreight = round2(
+        invoice.returns.reduce((sum, returned) => sum + Number(returned.freightCharge), 0),
+      );
+      const alreadyReturnedUnloading = round2(
+        invoice.returns.reduce((sum, returned) => sum + Number(returned.unloadingCharge), 0),
+      );
+      const alreadyReturnedLoading = round2(
+        invoice.returns.reduce((sum, returned) => sum + Number(returned.loadingCharge), 0),
+      );
+      const availableFreight = round2(Number(invoice.freightCharge) - alreadyReturnedFreight);
+      const availableUnloading = round2(Number(invoice.unloadingCharge) - alreadyReturnedUnloading);
+      const availableLoading = round2(Number(invoice.loadingCharge) - alreadyReturnedLoading);
+      if (requestedFreight > availableFreight + 0.01) {
+        throw new ValidationError(`Only ${availableFreight.toFixed(2)} freight charge can be returned`);
+      }
+      if (requestedUnloading > availableUnloading + 0.01) {
+        throw new ValidationError(`Only ${availableUnloading.toFixed(2)} unloading charge can be returned`);
+      }
+      if (requestedLoading > availableLoading + 0.01) {
+        throw new ValidationError(`Only ${availableLoading.toFixed(2)} loading charge can be returned`);
+      }
+
       const subTotal = round2(returnLines.reduce((sum, line) => sum + line.lineSubTotal, 0));
       const gstAmount = round2(returnLines.reduce((sum, line) => sum + line.lineGst, 0));
-      const grandTotal = round2(returnLines.reduce((sum, line) => sum + line.lineTotal, 0));
+      const grandTotal = round2(
+        returnLines.reduce((sum, line) => sum + line.lineTotal, 0)
+          + requestedFreight
+          + requestedUnloading
+          + requestedLoading,
+      );
       // A payment settles money; it does not remove the customer's right to return the
       // goods. Limit returns by the invoice value not already returned. When the invoice
       // was paid, the credit note is available through the refund workflow.
@@ -1222,6 +1280,9 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
           remarks: data.remarks?.trim() || null,
           subTotal,
           gstAmount,
+          freightCharge: requestedFreight,
+          unloadingCharge: requestedUnloading,
+          loadingCharge: requestedLoading,
           grandTotal,
           createdBy,
           lines: {
@@ -1301,6 +1362,9 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
         remarks: created.remarks,
         subTotal,
         gstAmount,
+        freightCharge: requestedFreight,
+        unloadingCharge: requestedUnloading,
+        loadingCharge: requestedLoading,
         grandTotal,
         refundedAmount: 0,
         refundableAmount: grandTotal,

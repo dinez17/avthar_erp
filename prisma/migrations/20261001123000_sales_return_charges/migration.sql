@@ -1,0 +1,4 @@
+ALTER TABLE "sales_returns"
+  ADD COLUMN "freightCharge" DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN "unloadingCharge" DECIMAL(12,2) NOT NULL DEFAULT 0,
+  ADD COLUMN "loadingCharge" DECIMAL(12,2) NOT NULL DEFAULT 0;

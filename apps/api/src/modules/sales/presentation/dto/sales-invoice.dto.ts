@@ -58,9 +58,30 @@ export class CreateSalesReturnDto {
   @IsOptional()
   returnDate?: string;
 
+  @ApiPropertyOptional({ minimum: 0 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  freightCharge?: number;
+
+  @ApiPropertyOptional({ minimum: 0 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  unloadingCharge?: number;
+
+  @ApiPropertyOptional({ minimum: 0 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  loadingCharge?: number;
+
   @ApiProperty({ type: [SalesReturnLineDto] })
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(0)
   @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => SalesReturnLineDto)

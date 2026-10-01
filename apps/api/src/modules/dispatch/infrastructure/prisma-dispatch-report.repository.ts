@@ -82,7 +82,11 @@ export class PrismaDispatchReportRepository implements DispatchReportRepository 
       : await Promise.all([
           this.prisma.stockBalance.groupBy({
             by: ['branchId', 'productId'],
-            where: { productId: { in: productIds }, branchId: { in: branchIds } },
+            where: {
+              productId: { in: productIds },
+              branchId: { in: branchIds },
+              godown: { deletedAt: null, isActive: true },
+            },
             _sum: { qtyBoxes: true },
           }),
           this.prisma.stockMovement.groupBy({

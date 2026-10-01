@@ -61,7 +61,9 @@ export class StockController {
         where: { deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' },
       }),
       this.prisma.stockBalance.groupBy({
-        by: ['branchId'], where: { productId }, _sum: { qtyBoxes: true },
+        by: ['branchId'],
+        where: { productId, godown: { deletedAt: null, isActive: true } },
+        _sum: { qtyBoxes: true },
       }),
       this.prisma.purchaseOrderLine.findMany({
         where: {
@@ -155,7 +157,12 @@ export class StockController {
     const productIds = products.map((product) => product.id);
     const [balances, draftPoLines, approvedPoLines, transitLines, reservations] = await Promise.all([
       this.prisma.stockBalance.groupBy({
-        by: ['productId'], where: { branchId: query.branchId, productId: { in: productIds } },
+        by: ['productId'],
+        where: {
+          branchId: query.branchId,
+          productId: { in: productIds },
+          godown: { deletedAt: null, isActive: true },
+        },
         _sum: { qtyBoxes: true },
       }),
       this.prisma.purchaseOrderLine.groupBy({

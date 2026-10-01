@@ -134,6 +134,7 @@ export class PrismaStockRepository implements StockRepository {
         productId: key.productId,
         branchId: key.branchId,
         godownId: key.godownId,
+        godown: { deletedAt: null, isActive: true },
         ...availabilityWhere(key),
       },
       select: { qtyBoxes: true },
@@ -172,6 +173,7 @@ export class PrismaStockRepository implements StockRepository {
       where: {
         branchId,
         godownId,
+        godown: { deletedAt: null, isActive: true },
         // Named gate only when one was asked for; otherwise every gate counts.
         ...(gateId ? { gateId } : {}),
         productId: { in: [...new Set(keys.map((k) => k.productId))] },
@@ -272,6 +274,8 @@ export class PrismaStockRepository implements StockRepository {
     filter: StockBalanceFilter,
   ): Promise<Paginated<StockBalanceItem>> {
     const where: Prisma.StockBalanceWhereInput = {
+      godown: { deletedAt: null, isActive: true },
+      branch: { deletedAt: null, isActive: true },
       ...(filter.branchId ? { branchId: filter.branchId } : {}),
       ...(filter.godownId ? { godownId: filter.godownId } : {}),
       ...(filter.productId ? { productId: filter.productId } : {}),

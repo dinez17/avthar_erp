@@ -28,6 +28,8 @@ const bucketFor = (ageDays: number | null): AgeBucket => {
 
 const balanceWhere = (filter: ReportFilter, search?: string): Prisma.StockBalanceWhereInput => ({
   NOT: { qtyBoxes: 0 },
+  godown: { deletedAt: null, isActive: true },
+  branch: { deletedAt: null, isActive: true },
   ...(filter.branchId ? { branchId: filter.branchId } : {}),
   ...(filter.godownId ? { godownId: filter.godownId } : {}),
   product: {
@@ -319,6 +321,7 @@ export class PrismaStockReportsRepository implements StockReportsRepository {
       by: ['productId', 'branchId'],
       where: {
         productId: { in: products.map((p) => p.id) },
+        godown: { deletedAt: null, isActive: true },
         ...(filter.branchId ? { branchId: filter.branchId } : {}),
       },
       _sum: { qtyBoxes: true },

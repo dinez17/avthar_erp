@@ -382,7 +382,10 @@ export class PrismaProductsRepository implements ProductsRepository {
 
     const held = await this.prisma.stockBalance.groupBy({
       by: ['productId'],
-      where: { productId: { in: suspects.map((suspect) => suspect.id) } },
+      where: {
+        productId: { in: suspects.map((suspect) => suspect.id) },
+        godown: { deletedAt: null, isActive: true },
+      },
       _sum: { qtyBoxes: true },
     });
     const boxesByProduct = new Map(

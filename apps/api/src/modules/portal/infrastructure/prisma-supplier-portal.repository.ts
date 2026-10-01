@@ -217,7 +217,10 @@ export class PrismaSupplierPortalRepository implements SupplierPortalRepository 
     const [stock, poLines] = await Promise.all([
       this.prisma.stockBalance.groupBy({
         by: ['productId'],
-        where: { productId: { in: productIds } },
+        where: {
+          productId: { in: productIds },
+          godown: { deletedAt: null, isActive: true },
+        },
         _sum: { qtyBoxes: true },
       }),
       this.prisma.purchaseOrderLine.findMany({

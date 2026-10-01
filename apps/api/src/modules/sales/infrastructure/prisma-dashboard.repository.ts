@@ -119,7 +119,11 @@ export class PrismaDashboardRepository implements DashboardRepository {
         select: { grandTotal: true },
       }),
       this.prisma.stockBalance.findMany({
-        where: { qtyBoxes: { gt: 0 }, ...branch },
+        where: {
+          qtyBoxes: { gt: 0 },
+          godown: { deletedAt: null, isActive: true },
+          ...branch,
+        },
         select: { productId: true, qtyBoxes: true },
       }),
       this.prisma.product.findMany({

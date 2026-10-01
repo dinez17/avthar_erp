@@ -34,7 +34,12 @@ export async function queryAvailableStock(
     // key, so the second silently replaced the first and half the stock vanished.
     prisma.stockBalance.groupBy({
       by: ['productId', 'branchId', 'godownId', 'batchNo', 'shade'],
-      where: { branchId: { in: branchIds }, productId: { in: productIds }, qtyBoxes: { gt: 0 } },
+      where: {
+        branchId: { in: branchIds },
+        productId: { in: productIds },
+        qtyBoxes: { gt: 0 },
+        godown: { deletedAt: null, isActive: true },
+      },
       _sum: { qtyBoxes: true },
       orderBy: [{ branchId: 'asc' }, { godownId: 'asc' }, { batchNo: 'asc' }],
     }),

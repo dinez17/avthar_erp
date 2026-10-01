@@ -13,6 +13,15 @@ import '@fontsource/plus-jakarta-sans/800.css';
 
 import App from './App';
 
+// autoUpdate activates a new service worker immediately. Reload an already-open
+// app once when that new worker takes control so its JavaScript cannot remain on
+// an obsolete API contract or obsolete diagnostics message.
+if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), {
+    once: true,
+  });
+}
+
 const container = document.getElementById('root');
 if (!container) throw new Error('Root element #root not found');
 

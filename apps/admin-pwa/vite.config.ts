@@ -67,17 +67,11 @@ export default defineConfig({
         // needs raising again the answer is route-level code splitting, not a bigger number.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: '/index.html',
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 10,
-              expiration: { maxEntries: 200, maxAgeSeconds: 86400 },
-            },
-          },
-        ],
+        // API URLs must always reach the server. Treating /api/docs or /api/health
+        // as SPA navigation produced the app's 404 page, and caching business API
+        // responses could show obsolete stock after connectivity returned.
+        navigateFallbackDenylist: [/^\/api(?:\/|$)/],
+        runtimeCaching: [],
       },
       // Register the service worker in dev too, so install can be tested before release.
       devOptions: { enabled: true, type: 'module' },

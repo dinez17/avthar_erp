@@ -8,7 +8,6 @@ import type { SalesInvoiceLineItem, SalesInvoicePrintData } from '@tiles-erp/sha
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useDeliverySlipPrint, useSalesInvoicePrint } from './invoices-api';
 import { PrintLogo } from '../../app/branding';
-import { useAuth } from '../../auth/AuthProvider';
 
 /** A4/A5 for sheet copies, 80mm and 58mm for the counter roll printers. */
 type PaperSize = 'A4' | 'A5' | '80mm' | '58mm';
@@ -84,10 +83,6 @@ export function SalesInvoicePrintPage(): JSX.Element {
   );
   const [documentType, setDocumentType] = useState<InvoiceDocument>(initialDocument);
   const [deliveryPrinted, setDeliveryPrinted] = useState(false);
-  const { user } = useAuth();
-  const canReprintDelivery = Boolean(
-    user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'),
-  );
   const standardPrint = useSalesInvoicePrint(documentType === 'delivery' ? null : (id ?? null));
   const deliveryPrint = useDeliverySlipPrint(id ?? null, documentType === 'delivery');
   const activePrint = documentType === 'delivery' ? deliveryPrint : standardPrint;
@@ -172,10 +167,10 @@ export function SalesInvoicePrintPage(): JSX.Element {
         <Button
           variant="contained"
           startIcon={<PrintIcon />}
-          disabled={documentType === 'delivery' && deliveryPrinted && !canReprintDelivery}
+          disabled={documentType === 'delivery' && deliveryPrinted}
           onClick={() => {
             window.print();
-            if (documentType === 'delivery' && !canReprintDelivery) setDeliveryPrinted(true);
+            if (documentType === 'delivery') setDeliveryPrinted(true);
           }}
         >
           Print

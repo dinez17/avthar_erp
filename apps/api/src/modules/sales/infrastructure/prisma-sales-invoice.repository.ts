@@ -1641,7 +1641,7 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     return result.length > 0 ? result : invoiceLines;
   }
 
-  async claimDeliverySlipPrint(id: UUID, actorId: UUID, allowReprint: boolean): Promise<void> {
+  async claimDeliverySlipPrint(id: UUID, actorId: UUID): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       // Serialise attempts for this invoice so two near-simultaneous requests cannot both
       // become the regular user's first copy.
@@ -1656,16 +1656,12 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
         throw new ValidationError('Post the sales invoice before printing it.');
       }
 
-      if (!allowReprint) {
-        const priorPrint = await tx.auditLog.findFirst({
-          where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
-          select: { id: true },
-        });
-        if (priorPrint) {
-          throw new ValidationError(
-            'The delivery slip has already been printed. Contact an admin for another copy.',
-          );
-        }
+      const priorPrint = await tx.auditLog.findFirst({
+        where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
+        select: { id: true },
+      });
+      if (priorPrint) {
+        throw new ValidationError('The delivery slip has already been printed.');
       }
 
       await tx.auditLog.create({
@@ -1674,7 +1670,7 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
           entityId: id,
           action: 'DELIVERY_SLIP_PRINTED',
           userId: actorId,
-          changes: { reprint: allowReprint },
+          changes: { reprint: false },
         },
       });
     });

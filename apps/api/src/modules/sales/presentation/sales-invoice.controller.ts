@@ -259,13 +259,12 @@ export class SalesInvoiceController {
 
   @Post(':id/delivery-slip-print')
   @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
-  @ApiOperation({ summary: 'Issue a delivery slip; regular users are limited to one copy' })
+  @ApiOperation({ summary: 'Issue a delivery slip; every user is limited to one copy' })
   printDeliverySlip(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
-    const allowReprint = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN');
-    return this.commandBus.execute(new PrintDeliverySlipCommand(id, user.id, allowReprint));
+    return this.commandBus.execute(new PrintDeliverySlipCommand(id, user.id));
   }
 
   @Get(':id')

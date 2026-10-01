@@ -133,11 +133,8 @@ export interface SalesInvoiceRepository {
 
   /** The invoice plus the letterhead, terms and declaration a printed copy needs. */
   printData(id: UUID): Promise<SalesInvoicePrintData | null>;
-  /**
-   * Records issuance of a delivery slip. Regular users may issue it once per invoice;
-   * administrators may issue further copies, all of which remain in the audit trail.
-   */
-  claimDeliverySlipPrint(id: UUID, actorId: UUID, allowReprint: boolean): Promise<void>;
+  /** Records the single permitted delivery-slip issuance for an invoice. */
+  claimDeliverySlipPrint(id: UUID, actorId: UUID): Promise<void>;
   billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties>;
   /**
    * Refuses lines shipping from a godown that belongs to a different branch.

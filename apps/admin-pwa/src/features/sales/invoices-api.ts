@@ -55,7 +55,7 @@ export function useSalesInvoicePrint(id: string | null) {
   });
 }
 
-/** Claims and loads a delivery slip. Regular users can successfully call this once. */
+/** Claims and loads a delivery slip. Every user can successfully call this once. */
 export function useDeliverySlipPrint(id: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [KEY, id, 'delivery-slip-print'],

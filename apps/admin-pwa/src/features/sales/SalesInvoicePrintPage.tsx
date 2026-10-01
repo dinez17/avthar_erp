@@ -218,6 +218,10 @@ export function SalesInvoicePrintPage(): JSX.Element {
           padding: ${isRoll ? '2px 0' : '6px 0'};
         }
         .inv-sheet .fine { font-size: ${isRoll ? '9px' : '10px'}; }
+        .inv-sheet .item-list-sheet { font-size: 14px; }
+        .inv-sheet .item-list-sheet .title { font-size: 20px; }
+        .inv-sheet.paper-A5 .item-list-sheet { font-size: 11px; }
+        .inv-sheet.paper-A5 .item-list-sheet .title { font-size: 16px; }
         .inv-sheet .godown-slip {
           display: block;
           width: 100%;
@@ -629,6 +633,10 @@ function InvoiceItemList({ data }: { data: SalesInvoicePrintData }): JSX.Element
             <td><strong>Customer:</strong> {invoice.customerName} · <strong>Pincode:</strong> {customerPincode || '-'}</td>
             <td><strong>Salesman:</strong> {invoice.salesmanName ?? '—'}</td>
           </tr>
+          <tr>
+            <td><strong>Address:</strong> {invoice.customerAddress || '—'}</td>
+            <td><strong>Phone:</strong> {invoice.customerMobile || '—'}</td>
+          </tr>
           {invoice.orderNumber && <tr><td colSpan={2}><strong>Sales order:</strong> {invoice.orderNumber}</td></tr>}
         </tbody>
       </table>
@@ -661,6 +669,9 @@ function InvoiceItemList({ data }: { data: SalesInvoicePrintData }): JSX.Element
       </table>
       <div style={{ marginTop: 8 }}><strong>Total product weight: {weight(totalWeight)} kg</strong></div>
       {invoice.remarks && <div style={{ marginTop: 8 }}><strong>Remarks:</strong> {invoice.remarks}</div>}
+      <div style={{ minHeight: 72, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end' }}>
+        <strong>Customer signature</strong>
+      </div>
     </div>
   );
 }

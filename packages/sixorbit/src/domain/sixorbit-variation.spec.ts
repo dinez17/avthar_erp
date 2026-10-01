@@ -55,6 +55,7 @@ const ROVEN: SixOrbitVariation = {
   tax: '18.00000000',
   price: '635.59000000',
   purchase_price: '109.00000000',
+  weight: '15.00000000',
   package_quantity: '3',
   c_package_measurement: 'Box',
   measured_qty: '8.0000',
@@ -124,6 +125,11 @@ describe('money', () => {
     expect(mapSixOrbitVariation(ROVEN).sellingRate).toBe(635.59);
   });
 
+  it('maps the SixOrbit product weight into kilograms', () => {
+    expect(mapSixOrbitVariation(ROVEN).weightKg).toBe(15);
+    expect(mapSixOrbitVariation({ ...ROVEN, weight: '' }).weightKg).toBeNull();
+  });
+
   it('flags a cost that is implausibly low against the price', () => {
     // 16.00 against a price of 1533.90 is 1%. Left unflagged, the below-cost guard would
     // never fire for this product.
@@ -145,8 +151,11 @@ describe('money', () => {
 });
 
 describe('identity and masters', () => {
-  it('uses variation_number for the SKU, since their sku is always empty', () => {
+  it('uses variation_number for the ERP SKU', () => {
     expect(mapSixOrbitVariation(ROVEN).sku).toBe('17361');
+    expect(mapSixOrbitVariation({ ...ROVEN, variation_number: '17493', sku: 'TEST' }).sku).toBe(
+      '17493',
+    );
   });
 
   it('falls back to isvid only when there is no variation number either', () => {

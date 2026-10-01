@@ -14,7 +14,7 @@ import {
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PERMISSIONS } from '@tiles-erp/config';
-import type { OrgNodeItem, Paginated } from '@tiles-erp/shared-types';
+import type { AuthenticatedUser, OrgNodeItem, Paginated } from '@tiles-erp/shared-types';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermissions } from '../../auth/decorators/permissions.decorator';
 import {
@@ -107,10 +107,16 @@ export class BranchesController {
   ) {}
 
   @Get()
-  @RequirePermissions(PERMISSIONS.BRANCH_READ)
-  @ApiOperation({ summary: 'List branches (optionally filtered by company)' })
-  list(@Query() query: OrgNodeListQueryDto): Promise<Paginated<OrgNodeItem>> {
-    return this.queryBus.execute(new ListBranchesQuery(query, query.parentId));
+  @ApiOperation({ summary: 'List branches available to the logged-in user' })
+  list(@Query() query: OrgNodeListQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<Paginated<OrgNodeItem>> {
+    // Branches are operational context, not only administration data. A salesperson,
+    // billing clerk or stock user needs their assigned branch in document selectors even
+    // when their role cannot manage the branch master. Non-admin results remain scoped to
+    // the mappings on the authenticated user.
+    const branchIds = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')
+      ? undefined
+      : user.branchIds;
+    return this.queryBus.execute(new ListBranchesQuery(query, query.parentId, branchIds));
   }
 
   @Post()

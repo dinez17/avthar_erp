@@ -32,6 +32,7 @@ import { useBranches } from '../products/branch-prices-api';
 import { PurchaseReturnDialog } from './PurchaseReturnDialog';
 import { useSuppliers } from './api';
 import { usePostPurchaseReturn, usePurchaseReturn, usePurchaseReturns } from './returns-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<PurchaseReturnStatus, 'default' | 'success'> = {
   DRAFT: 'default',
@@ -47,7 +48,7 @@ export function PurchaseReturnsPage(): JSX.Element {
   const suppliers = useSuppliers();
   const branches = useBranches();
   const [supplierId, setSupplierId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
 
   const { data, isFetching } = usePurchaseReturns(pagination.query, {
     supplierId: supplierId || undefined,

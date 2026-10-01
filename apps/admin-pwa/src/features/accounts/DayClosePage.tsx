@@ -2,6 +2,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -10,7 +11,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   FormControlLabel,
   IconButton,
   MenuItem,
@@ -31,21 +31,20 @@ import {
   DENOMINATIONS,
   denominationTotal,
   handoverPlan,
-  handoverProblem,
   hasCounted,
-  varianceVerdict,
   type DenominationCounts,
 } from '@tiles-erp/shared';
-import type { CashCountItem } from '@tiles-erp/shared-types';
+import type { CashCountItem, DayCloseStatus, LedgerAccountItem } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
 import { VariancePanel } from './VariancePanel';
 import {
   useCashCounts,
   useCloseDay,
-  useDayCloseStatus,
+  useDayCloseStatuses,
   useLedgerAccounts,
   useReopenDay,
 } from './api';
+import { AccountBranchSelect, useAccountBranch } from './AccountBranchSelect';
 
 /**
  * Tolerates a missing figure rather than throwing.
@@ -70,24 +69,28 @@ const day = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
  * the arithmetic the till has been doing all day.
  */
 export function DayClosePage(): JSX.Element {
-  const [accountId, setAccountId] = useState('');
-  const [counts, setCounts] = useState<DenominationCounts>({});
-  const [typedTotal, setTypedTotal] = useState('');
+  const branch = useAccountBranch();
   const [postDifference, setPostDifference] = useState(true);
-  const [handover, setHandover] = useState('');
   const [ownerId, setOwnerId] = useState('');
-  const [handoverTouched, setHandoverTouched] = useState(false);
-  const [notes, setNotes] = useState('');
   const [reopening, setReopening] = useState<CashCountItem | null>(null);
   const [reason, setReason] = useState('');
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bulkAccountIds, setBulkAccountIds] = useState<string[]>([]);
+  const [bulkCounts, setBulkCounts] = useState<DenominationCounts>({});
+  const [bulkNotes, setBulkNotes] = useState('');
 
-  const { data: accounts = [] } = useLedgerAccounts();
-  const { data: status } = useDayCloseStatus(accountId);
-  const { data: history = [] } = useCashCounts(accountId || undefined);
+  const { data: accounts = [] } = useLedgerAccounts({ branchId: branch.branchId });
+  const { data: ownerAccounts = [] } = useLedgerAccounts({ type: 'OWNER' });
+  const { data: history = [] } = useCashCounts(undefined, branch.branchId);
   const close = useCloseDay();
   const reopen = useReopenDay();
+  const bulkStatuses = useDayCloseStatuses(bulkAccountIds);
+
+  useEffect(() => {
+    setBulkAccountIds([]);
+    setBulkCounts({});
+  }, [branch.branchId]);
 
   /**
    * Only tills and bank accounts are closed. An owner's holding is not counted at the end
@@ -99,94 +102,112 @@ export function DayClosePage(): JSX.Element {
     [accounts],
   );
 
-  useEffect(() => {
-    if (!accountId && closeable.length > 0) setAccountId(closeable[0]!.id);
-  }, [closeable, accountId]);
+  const owners = useMemo(() => ownerAccounts, [ownerAccounts]);
 
-  // A fresh account means a fresh count. Carrying the previous drawer's notes over would
-  // be worse than starting blank.
-  useEffect(() => {
-    setCounts({});
-    setTypedTotal('');
-    setNotes('');
-    setHandover('');
-    setHandoverTouched(false);
+  const loadedBulkStatuses = bulkStatuses
+    .map((query) => query.data)
+    .filter((entry): entry is DayCloseStatus => Boolean(entry));
+  const bulkLoading = bulkStatuses.some((query) => query.isLoading);
+  const bulkDates = new Set(loadedBulkStatuses.map((entry) => entry.nextCloseDate.slice(0, 10)));
+  const bulkSameDate = bulkDates.size <= 1;
+  const cashStatuses = loadedBulkStatuses.filter((entry) => entry.accountType === 'CASH');
+  const totalBook = loadedBulkStatuses.reduce((sum, entry) => sum + entry.expectedBalance, 0);
+  const cashCounted = denominationTotal(bulkCounts);
+  const bankBook = loadedBulkStatuses
+    .filter((entry) => entry.accountType !== 'CASH')
+    .reduce((sum, entry) => sum + entry.expectedBalance, 0);
+  const totalCounted = cashCounted + bankBook;
+  const totalDifference = Math.round((totalCounted - totalBook) * 100) / 100;
+  // Day close now clears the physical drawer completely. Every counted denomination,
+  // including ₹50/₹20/₹10/₹5 and coins, is handed over instead of being left as a
+  // rounded remainder or tomorrow's float.
+  const overallPlan = handoverPlan(cashCounted, 0, 1);
+  const bulkReady = loadedBulkStatuses.length === bulkAccountIds.length
+    && (cashStatuses.length === 0 || hasCounted(bulkCounts));
+
+  const submitBulk = async (): Promise<void> => {
     setError(null);
-  }, [accountId]);
+    setNote(null);
+    if (loadedBulkStatuses.length !== bulkAccountIds.length || bulkLoading) return;
+    if (!bulkSameDate) {
+      setError('The selected accounts have different next closing dates. Close the older accounts first.');
+      return;
+    }
+    const cashNeedsHandover = overallPlan.handover > 0;
+    if (cashNeedsHandover && !ownerId) {
+      setError('Choose the owner receiving the cash handover.');
+      return;
+    }
 
-  const isCash = status?.accountType === 'CASH';
-  const countedAmount = isCash ? denominationTotal(counts) : Number(typedTotal) || 0;
-  const expected = status?.expectedBalance ?? 0;
-  const variance = Math.round((countedAmount - expected) * 100) / 100;
-  const verdict = varianceVerdict(variance);
-  const ready = isCash ? hasCounted(counts) : typedTotal.trim() !== '';
+    const closed: string[] = [];
+    try {
+      // One physical count can cover several cash ledgers. Keep each ledger as close as
+      // possible to its book balance, put the combined variance on the final cash ledger,
+      // and split the single owner handover without ever overdrawing an account.
+      let countedLeft = cashCounted;
+      const countedByAccount = new Map<string, number>();
+      cashStatuses.forEach((entry, index) => {
+        const last = index === cashStatuses.length - 1;
+        const amount = last
+          ? countedLeft
+          : Math.min(countedLeft, Math.max(0, entry.expectedBalance));
+        const rounded = Math.round(amount * 100) / 100;
+        countedByAccount.set(entry.accountId, rounded);
+        countedLeft = Math.round((countedLeft - rounded) * 100) / 100;
+      });
 
-  const setCount = (denomination: number, value: string): void => {
-    setCounts((previous) => ({ ...previous, [denomination]: Math.max(0, Number(value) || 0) }));
-    setHandoverTouched(false);
+      let handoverLeft = overallPlan.handover;
+      const handoverByAccount = new Map<string, number>();
+      cashStatuses.forEach((entry) => {
+        const counted = countedByAccount.get(entry.accountId) ?? 0;
+        const amount = Math.min(counted, handoverLeft);
+        const rounded = Math.round(amount * 100) / 100;
+        handoverByAccount.set(entry.accountId, rounded);
+        handoverLeft = Math.round((handoverLeft - rounded) * 100) / 100;
+      });
+
+      for (const entry of loadedBulkStatuses) {
+        const countedAmountForAccount = entry.accountType === 'CASH'
+          ? countedByAccount.get(entry.accountId) ?? 0
+          : entry.expectedBalance;
+        if (!Number.isFinite(countedAmountForAccount) || countedAmountForAccount < 0) {
+          throw new Error(`Enter a valid closing balance for ${entry.accountName}`);
+        }
+        if (entry.accountType === 'CASH' && !hasCounted(bulkCounts)) {
+          throw new Error(`Count the denominations for ${entry.accountName}`);
+        }
+        const handoverAmount = entry.accountType === 'CASH'
+          ? handoverByAccount.get(entry.accountId) ?? 0
+          : 0;
+        const saved = await close.mutateAsync({
+          accountId: entry.accountId,
+          closeDate: entry.nextCloseDate,
+          countedAmount: countedAmountForAccount,
+          // The note breakdown is a combined physical count, so it cannot truthfully be
+          // attached to each individual ledger. Each close stores its allocated total.
+          denominations: undefined,
+          postDifference,
+          handoverAmount: handoverAmount > 0 ? handoverAmount : undefined,
+          handoverAccountId: handoverAmount > 0 ? ownerId : undefined,
+          notes: bulkNotes.trim() || undefined,
+        });
+        closed.push(saved.countNo);
+      }
+      setNote(`${closed.length} accounts closed: ${closed.join(', ')}`);
+      setBulkAccountIds([]);
+      setBulkCounts({});
+      setBulkNotes('');
+    } catch (problem) {
+      const message = problem instanceof ApiError || problem instanceof Error
+        ? problem.message
+        : 'Could not close the selected accounts';
+      setError(closed.length > 0 ? `${closed.length} account(s) closed before the error: ${message}` : message);
+    }
   };
-
-  const owners = useMemo(
-    () => accounts.filter((account) => account.type === 'OWNER'),
-    [accounts],
-  );
-
-  /**
-   * What the drawer would hand over, left alone once someone types their own figure.
-   *
-   * Recomputing over a typed amount every time a note is counted would fight the person
-   * doing the counting, and they have the envelope in their hand.
-   */
-  const suggested = handoverPlan(countedAmount, status?.retainedFloat ?? 0);
-  const handoverAmount = handoverTouched ? Number(handover) || 0 : suggested.handover;
-  const retained = Math.round((countedAmount - handoverAmount) * 100) / 100;
-  const handoverIssue = handoverProblem(handoverAmount, countedAmount, ownerId || null);
 
   useEffect(() => {
     if (owners.length === 1 && !ownerId) setOwnerId(owners[0]!.id);
   }, [owners, ownerId]);
-
-  const totalNotes = useMemo(
-    () => DENOMINATIONS.reduce((sum, d) => sum + (counts[d] ?? 0), 0),
-    [counts],
-  );
-
-  const submit = async (): Promise<void> => {
-    if (!status) return;
-    setError(null);
-    try {
-      const saved = await close.mutateAsync({
-        accountId: status.accountId,
-        closeDate: status.nextCloseDate,
-        countedAmount,
-        denominations: isCash ? (counts as Record<string, number>) : undefined,
-        postDifference,
-        handoverAmount: handoverAmount > 0 ? handoverAmount : undefined,
-        handoverAccountId: handoverAmount > 0 ? ownerId : undefined,
-        notes: notes.trim() || undefined,
-      });
-      setNote(
-        [
-          `${saved.countNo} closed ${day(saved.closeDate)}`,
-          saved.variance === 0
-            ? 'and balanced'
-            : `with ${money(Math.abs(saved.variance))} ${saved.variance < 0 ? 'short' : 'over'}`,
-          saved.handoverAmount > 0
-            ? `· ${money(saved.handoverAmount)} to ${saved.handoverAccountName}, ${money(saved.retainedAmount)} left in the drawer`
-            : '',
-        ]
-          .filter(Boolean)
-          .join(' '),
-      );
-      setCounts({});
-      setTypedTotal('');
-      setNotes('');
-      setHandover('');
-      setHandoverTouched(false);
-    } catch (problem) {
-      setError(problem instanceof ApiError ? problem.message : 'Could not close that day');
-    }
-  };
 
   const confirmReopen = async (): Promise<void> => {
     if (!reopening) return;
@@ -206,6 +227,7 @@ export function DayClosePage(): JSX.Element {
       title="Day close"
       subtitle="Count the drawer against the book, then lock the day"
     >
+      <Stack sx={{ mb: 2 }}><AccountBranchSelect {...branch} /></Stack>
       {note && (
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNote(null)}>
           {note}
@@ -218,298 +240,79 @@ export function DayClosePage(): JSX.Element {
       )}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
-          <TextField
-            select
+        <Stack spacing={1.5}>
+          <Box>
+            <Typography variant="subtitle1" fontWeight={700}>Close multiple accounts</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Enter the cash denominations once. All counted cash is handed over; bank balances use their book balance automatically.
+            </Typography>
+          </Box>
+          <Autocomplete<LedgerAccountItem, true>
+            multiple
             size="small"
-            label="Account"
-            value={accountId}
-            onChange={(event) => setAccountId(event.target.value)}
-            sx={{ minWidth: 280 }}
-          >
-            {closeable.map((account) => (
-              <MenuItem key={account.id} value={account.id}>
-                {account.name}
-                <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                  {account.branchName ?? 'Company'}
-                </Typography>
-              </MenuItem>
-            ))}
-          </TextField>
+            options={closeable}
+            value={closeable.filter((account) => bulkAccountIds.includes(account.id))}
+            getOptionLabel={(account) => `${account.name} · ${account.branchName ?? 'Company'}`}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            onChange={(_, selected) => setBulkAccountIds(selected.map((account) => account.id))}
+            renderInput={(params) => (
+              <TextField {...params} label="Accounts" placeholder={bulkAccountIds.length ? '' : 'Select accounts'} />
+            )}
+          />
 
-          {status && (
-            <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Chip
-                icon={<LockIcon fontSize="small" />}
-                size="small"
-                label={
-                  status.lastCloseDate
-                    ? `Locked to ${day(status.lastCloseDate)}`
-                    : 'Never counted'
-                }
-              />
-              <Typography variant="body2">
-                Closing <strong>{day(status.nextCloseDate)}</strong>
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {status.movementCount} movement{status.movementCount === 1 ? '' : 's'} that day
-              </Typography>
-            </Stack>
+          {cashStatuses.length > 0 && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))', lg: 'repeat(9, minmax(0, 1fr))' }, gap: 1 }}>
+              {DENOMINATIONS.map((denomination) => (
+                <TextField
+                  key={denomination}
+                  size="small"
+                  label={`₹${denomination}`}
+                  value={bulkCounts[denomination] || ''}
+                  onChange={(event) => setBulkCounts((previous) => ({ ...previous, [denomination]: Math.max(0, Number(event.target.value) || 0) }))}
+                  inputProps={{ inputMode: 'numeric', style: { textAlign: 'right' } }}
+                />
+              ))}
+            </Box>
           )}
+
+          {loadedBulkStatuses.length > 0 && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(5, 1fr)' }, gap: 1.5 }}>
+              <CloseFigure label="Book balance" value={totalBook} />
+              <CloseFigure label="Counted" value={cashStatuses.length === 0 || hasCounted(bulkCounts) ? totalCounted : null} />
+              <CloseFigure label="Difference" value={cashStatuses.length === 0 || hasCounted(bulkCounts) ? totalDifference : null} color={totalDifference === 0 ? 'success.main' : totalDifference < 0 ? 'error.main' : 'warning.main'} />
+              <CloseFigure label="Handover" value={cashStatuses.length === 0 || hasCounted(bulkCounts) ? overallPlan.handover : null} />
+              <CloseFigure label="Retained" value={cashStatuses.length === 0 || hasCounted(bulkCounts) ? overallPlan.retained : null} />
+            </Box>
+          )}
+
+          {bulkAccountIds.length > 0 && !bulkSameDate && (
+            <Alert severity="warning">Selected accounts have different next closing dates.</Alert>
+          )}
+          {cashStatuses.length > 0 && (
+            <TextField select size="small" label="Cash handover to" value={ownerId} onChange={(event) => setOwnerId(event.target.value)} sx={{ maxWidth: 360 }}>
+              {owners.map((owner) => <MenuItem key={owner.id} value={owner.id}>{owner.name}</MenuItem>)}
+            </TextField>
+          )}
+          {totalDifference !== 0 && loadedBulkStatuses.length > 0 && (
+            <FormControlLabel
+              control={<Checkbox checked={postDifference} onChange={(event) => setPostDifference(event.target.checked)} />}
+              label="Post differences so each book matches its counted balance"
+            />
+          )}
+          {bulkAccountIds.length > 0 && (
+            <TextField size="small" label="Common notes" value={bulkNotes} onChange={(event) => setBulkNotes(event.target.value)} multiline minRows={2} />
+          )}
+          <Button
+            variant="contained"
+            startIcon={<LockIcon />}
+            disabled={!bulkAccountIds.length || !bulkReady || bulkLoading || !bulkSameDate || close.isPending}
+            onClick={() => void submitBulk()}
+            sx={{ alignSelf: 'flex-start' }}
+          >
+            Close {bulkAccountIds.length || ''} selected account{bulkAccountIds.length === 1 ? '' : 's'}
+          </Button>
         </Stack>
       </Paper>
-
-      {status && (
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
-          <Paper variant="outlined" sx={{ p: 2, flex: 1 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              {isCash ? 'Count the drawer' : 'What the statement shows'}
-            </Typography>
-            <Divider sx={{ mb: 1.5 }} />
-
-            {isCash ? (
-              <>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Note</TableCell>
-                      <TableCell align="right" width={110}>
-                        Count
-                      </TableCell>
-                      <TableCell align="right">Value</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {DENOMINATIONS.map((denomination) => {
-                      const quantity = counts[denomination] ?? 0;
-                      return (
-                        <TableRow key={denomination} hover>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              ₹{denomination}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <TextField
-                              size="small"
-                              value={quantity || ''}
-                              onChange={(event) => setCount(denomination, event.target.value)}
-                              inputProps={{ inputMode: 'numeric', style: { textAlign: 'right' } }}
-                              sx={{ width: 90 }}
-                              placeholder="0"
-                            />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" color={quantity ? 'text.primary' : 'text.disabled'}>
-                              {money(denomination * quantity)}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    <TableRow>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={600}>
-                          Counted
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="caption" color="text.secondary">
-                          {totalNotes} pcs
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="body2" fontWeight={700}>
-                          {money(countedAmount)}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-                <Typography variant="caption" color="text.secondary">
-                  The total is what the notes add up to — it cannot be typed over. That is
-                  the point of counting.
-                </Typography>
-              </>
-            ) : (
-              <Stack spacing={2}>
-                <TextField
-                  size="small"
-                  label="Closing balance on the statement"
-                  value={typedTotal}
-                  onChange={(event) => setTypedTotal(event.target.value)}
-                  inputProps={{ inputMode: 'decimal' }}
-                />
-                <Typography variant="caption" color="text.secondary">
-                  A bank account has no notes to count, so it is reconciled against the
-                  statement instead.
-                </Typography>
-              </Stack>
-            )}
-          </Paper>
-
-          <Paper variant="outlined" sx={{ p: 2, flex: 1 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Against the book
-            </Typography>
-            <Divider sx={{ mb: 1.5 }} />
-
-            <Stack spacing={1.5}>
-              <Line label="The book says" value={expected} />
-              <Line label="Counted" value={countedAmount} />
-              <Divider />
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Difference
-                </Typography>
-                <Typography
-                  variant="h5"
-                  fontWeight={700}
-                  color={
-                    !ready
-                      ? 'text.disabled'
-                      : verdict === 'BALANCED'
-                        ? 'success.main'
-                        : verdict === 'SHORT'
-                          ? 'error.main'
-                          : 'warning.main'
-                  }
-                >
-                  {ready ? money(variance) : '—'}
-                </Typography>
-                {ready && (
-                  <Typography variant="caption" color="text.secondary">
-                    {verdict === 'BALANCED'
-                      ? 'The drawer agrees with the book.'
-                      : verdict === 'SHORT'
-                        ? 'The drawer holds less than the book says — money left without a record.'
-                        : 'The drawer holds more than the book says — money arrived without one.'}
-                  </Typography>
-                )}
-              </Box>
-
-              {ready && verdict !== 'BALANCED' && (
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={postDifference}
-                      onChange={(event) => setPostDifference(event.target.checked)}
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2">Post the difference</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Writes an adjusting entry so the book matches the count. Leave it off
-                        while someone is still looking for the missing note.
-                      </Typography>
-                    </Box>
-                  }
-                />
-              )}
-
-              {isCash && ready && (
-                <>
-                  <Divider />
-                  <Typography variant="subtitle2">Hand over the takings</Typography>
-
-                  {owners.length === 0 ? (
-                    <Alert severity="info">
-                      No owners are set up yet. Add them under <strong>Cash &amp; bank</strong> as
-                      accounts of type <strong>Owner</strong>, and the day's takings can go to one
-                      of them at close.
-                    </Alert>
-                  ) : (
-                    <>
-                      <Stack direction="row" spacing={2}>
-                        <TextField
-                          select
-                          size="small"
-                          fullWidth
-                          label="To"
-                          value={ownerId}
-                          onChange={(event) => setOwnerId(event.target.value)}
-                        >
-                          {owners.map((owner) => (
-                            <MenuItem key={owner.id} value={owner.id}>
-                              {owner.name}
-                              <Typography
-                                component="span"
-                                variant="caption"
-                                color="text.secondary"
-                                sx={{ ml: 1 }}
-                              >
-                                holding {money(owner.currentBalance)}
-                              </Typography>
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          label="Amount"
-                          value={handoverTouched ? handover : String(suggested.handover)}
-                          onChange={(event) => {
-                            setHandover(event.target.value);
-                            setHandoverTouched(true);
-                          }}
-                          inputProps={{ inputMode: 'decimal' }}
-                          error={Boolean(handoverIssue)}
-                          helperText={handoverIssue ?? ' '}
-                        />
-                      </Stack>
-
-                      <Stack
-                        direction="row"
-                        justifyContent="space-between"
-                        alignItems="baseline"
-                      >
-                        <Typography variant="body2" color="text.secondary">
-                          The drawer opens tomorrow with
-                        </Typography>
-                        <Typography variant="h6" fontWeight={700}>
-                          {money(retained)}
-                        </Typography>
-                      </Stack>
-                      <Typography variant="caption" color="text.secondary">
-                        {status.retainedFloat > 0
-                          ? `This drawer keeps ${money(status.retainedFloat)} back, rounded up to a note it can actually hand over. Change the amount if tonight is different.`
-                          : 'This drawer keeps nothing back. Set a float on the account if it needs change in the morning.'}
-                      </Typography>
-                    </>
-                  )}
-                </>
-              )}
-
-              <TextField
-                size="small"
-                multiline
-                minRows={2}
-                label="Notes"
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder={
-                  verdict === 'BALANCED'
-                    ? 'Anything worth remembering about today'
-                    : 'What you think happened'
-                }
-              />
-
-              <Button
-                variant="contained"
-                startIcon={<LockIcon />}
-                disabled={!ready || Boolean(handoverIssue) || close.isPending}
-                onClick={() => void submit()}
-              >
-                Close {day(status.nextCloseDate)}
-              </Button>
-              <Typography variant="caption" color="text.secondary">
-                Once closed, nothing can be dated on or before that day without reopening it.
-              </Typography>
-            </Stack>
-          </Paper>
-        </Stack>
-      )}
 
       {history.length > 0 && (
         <Paper variant="outlined" sx={{ mt: 3 }}>
@@ -520,6 +323,7 @@ export function DayClosePage(): JSX.Element {
             <TableHead>
               <TableRow>
                 <TableCell>Day</TableCell>
+                <TableCell>Account</TableCell>
                 <TableCell>Number</TableCell>
                 <TableCell align="right">Book</TableCell>
                 <TableCell align="right">Counted</TableCell>
@@ -534,6 +338,10 @@ export function DayClosePage(): JSX.Element {
               {history.map((count) => (
                 <TableRow key={count.id} hover sx={count.reopenedAt ? { opacity: 0.55 } : {}}>
                   <TableCell>{day(count.closeDate)}</TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{count.accountName}</Typography>
+                    <Typography variant="caption" color="text.secondary">{count.branchName ?? 'Company'}</Typography>
+                  </TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Typography variant="caption" fontFamily="monospace">
@@ -646,13 +454,11 @@ export function DayClosePage(): JSX.Element {
   );
 }
 
-function Line({ label, value }: { label: string; value: number }): JSX.Element {
+function CloseFigure({ label, value, color }: { label: string; value: number | null; color?: string }): JSX.Element {
   return (
-    <Stack direction="row" justifyContent="space-between" alignItems="baseline">
-      <Typography variant="body2" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography variant="body1">{money(value)}</Typography>
-    </Stack>
+    <Box>
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      <Typography variant="body1" fontWeight={700} color={color}>{money(value)}</Typography>
+    </Box>
   );
 }

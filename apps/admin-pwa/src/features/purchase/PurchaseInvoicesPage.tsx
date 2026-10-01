@@ -5,6 +5,7 @@ import PublishIcon from '@mui/icons-material/Publish';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import {
   Alert,
+  Autocomplete,
   Button,
   Chip,
   Dialog,
@@ -45,6 +46,7 @@ import {
   usePurchaseInvoices,
   useRateHistory,
 } from './invoices-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<PurchaseInvoiceStatus, 'default' | 'success' | 'error'> = {
   DRAFT: 'default',
@@ -55,6 +57,12 @@ const STATUS_COLORS: Record<PurchaseInvoiceStatus, 'default' | 'success' | 'erro
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
+const localDate = (): string => {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+};
+
 /** Purchase invoices and the supplier rate history they generate. */
 export function PurchaseInvoicesPage(): JSX.Element {
   const [tab, setTab] = useState(0);
@@ -62,11 +70,15 @@ export function PurchaseInvoicesPage(): JSX.Element {
   const suppliers = useSuppliers();
   const branches = useBranches();
   const [supplierId, setSupplierId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
+  const [fromDate, setFromDate] = useState(localDate);
+  const [toDate, setToDate] = useState(localDate);
 
   const { data, isFetching } = usePurchaseInvoices(pagination.query, {
     supplierId: supplierId || undefined,
     branchId: branchId || undefined,
+    fromDate: fromDate ? `${fromDate}T00:00:00.000+05:30` : undefined,
+    toDate: toDate ? `${toDate}T23:59:59.999+05:30` : undefined,
   });
   const rates = useRateHistory(undefined, supplierId || undefined, tab === 1);
   const postInvoice = usePostPurchaseInvoice();
@@ -225,26 +237,21 @@ export function PurchaseInvoicesPage(): JSX.Element {
         )}
 
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <TextField
-            select
-            label="Supplier"
+          <Autocomplete
             size="small"
-            fullWidth={false}
-            value={supplierId}
-            onChange={(e) => {
-              setSupplierId(e.target.value);
+            options={suppliers.data ?? []}
+            getOptionLabel={(option) => `${option.name}${option.phone ? ` · ${option.phone}` : ''}`}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            value={(suppliers.data ?? []).find((supplier) => supplier.id === supplierId) ?? null}
+            onChange={(_, supplier) => {
+              setSupplierId(supplier?.id ?? '');
               pagination.setPage(1);
             }}
-            sx={{ width: 200 }}
-          >
-            <MenuItem value="">All suppliers</MenuItem>
-            {(suppliers.data ?? []).map((s) => (
-              <MenuItem key={s.id} value={s.id}>
-                {s.name}
-              </MenuItem>
-            ))}
-          </TextField>
+            sx={{ width: { xs: '100%', sm: 280 } }}
+            renderInput={(params) => <TextField {...params} label="Supplier" placeholder="All suppliers" />}
+          />
           {tab === 0 && (
+            <>
             <TextField
               select
               label="Branch"
@@ -264,6 +271,31 @@ export function PurchaseInvoicesPage(): JSX.Element {
                 </MenuItem>
               ))}
             </TextField>
+            <TextField
+              label="From"
+              type="date"
+              size="small"
+              value={fromDate}
+              onChange={(event) => {
+                setFromDate(event.target.value);
+                pagination.setPage(1);
+              }}
+              InputLabelProps={{ shrink: true }}
+              sx={{ width: { xs: '100%', sm: 170 } }}
+            />
+            <TextField
+              label="To"
+              type="date"
+              size="small"
+              value={toDate}
+              onChange={(event) => {
+                setToDate(event.target.value);
+                pagination.setPage(1);
+              }}
+              InputLabelProps={{ shrink: true }}
+              sx={{ width: { xs: '100%', sm: 170 } }}
+            />
+            </>
           )}
         </Stack>
 
@@ -353,6 +385,12 @@ export function PurchaseInvoicesPage(): JSX.Element {
                 </TableBody>
               </Table>
               <Stack direction="row" spacing={3} justifyContent="flex-end">
+                <Typography variant="body2" fontWeight={700}>
+                  Total boxes:{' '}
+                  {(detail.data.lines ?? [])
+                    .reduce((sum, line) => sum + Number(line.qtyBoxes || 0), 0)
+                    .toLocaleString('en-IN', { maximumFractionDigits: 3 })}
+                </Typography>
                 <Typography variant="body2">
                   Transport: {money(detail.data.transportCharge)}
                 </Typography>

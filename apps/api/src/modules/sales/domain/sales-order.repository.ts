@@ -14,7 +14,10 @@ export const SALES_ORDER_REPOSITORY = Symbol('SALES_ORDER_REPOSITORY');
 export interface SalesOrderFilter {
   customerId?: UUID;
   branchId?: UUID;
+  branchIds?: UUID[];
   status?: SalesOrderStatus;
+  fromDate?: Date;
+  toDate?: Date;
 }
 
 export interface ResolvedSalesOrderLine {

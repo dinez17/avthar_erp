@@ -1,10 +1,11 @@
-import { Controller, Get, Header, Query, Res } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Header, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { QueryBus } from '@nestjs/cqrs';
 import { ApiBearerAuth, ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { IsDateString, IsOptional, IsUUID } from 'class-validator';
 import { PERMISSIONS } from '@tiles-erp/config';
-import type { DashboardSummary, Gstr1Return, GstSummary } from '@tiles-erp/shared-types';
+import type { AuthenticatedUser, DashboardSummary, Gstr1Return, GstSummary } from '@tiles-erp/shared-types';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermissions } from '../../auth/decorators/permissions.decorator';
 import { RequireBranchScope } from '../../auth/decorators/scope.decorator';
 import { DashboardSummaryQuery } from '../application/dashboard.handlers';
@@ -38,8 +39,11 @@ export class DashboardController {
   @RequirePermissions(PERMISSIONS.DASHBOARD_READ)
   @RequireBranchScope({ in: 'query' })
   @ApiOperation({ summary: 'Sales, collections, outstanding and stock at a glance' })
-  summary(@Query() query: DashboardQueryDto): Promise<DashboardSummary> {
-    return this.queryBus.execute(new DashboardSummaryQuery(query.from, query.to, query.branchId));
+  summary(@Query() query: DashboardQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<DashboardSummary> {
+    const canSeeAllBranches = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN');
+    const branchId = query.branchId ?? (canSeeAllBranches ? undefined : user.branchIds[0]);
+    if (!canSeeAllBranches && !branchId) throw new ForbiddenException('No branch assigned');
+    return this.queryBus.execute(new DashboardSummaryQuery(query.from, query.to, branchId));
   }
 
   @Get('gst-summary')

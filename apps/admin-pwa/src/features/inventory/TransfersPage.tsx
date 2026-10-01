@@ -36,6 +36,7 @@ import { useBranches } from '../products/branch-prices-api';
 import { ReceiveTransferDialog } from './ReceiveTransferDialog';
 import { TransferDialog } from './TransferDialog';
 import { useCancelTransfer, useTransfer, useTransfers } from './transfers-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -62,7 +63,7 @@ export function TransfersPage(): JSX.Element {
   const navigate = useNavigate();
   const pagination = usePagination();
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [status, setStatus] = useState<TransferStatus | ''>('');
   const { data, isFetching } = useTransfers(pagination.query, {
     branchId: branchId || undefined,

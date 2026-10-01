@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { GST_STATES } from '@tiles-erp/config';
 import type { Prisma } from '@prisma/client';
-import { buildPaginated, ConflictError, NotFoundError, ValidationError } from '@tiles-erp/shared';
+import { buildPaginated, ConflictError, excludeGst, NotFoundError, ValidationError } from '@tiles-erp/shared';
 import type {
   AvailableStockItem,
   Paginated,
@@ -24,15 +25,31 @@ import type {
 const include = {
   branch: { select: { name: true } },
   lines: {
+    orderBy: { lineNo: 'asc' },
     include: {
       product: {
-        select: { sku: true, name: true, sizeMm: true, piecesPerBox: true, baseUom: true },
+        select: { sku: true, name: true, sizeMm: true, piecesPerBox: true, weightKg: true, baseUom: true },
       },
     },
   },
 } satisfies Prisma.QuotationInclude;
 
 type Row = Prisma.QuotationGetPayload<{ include: typeof include }>;
+
+const quotationCustomerLocation = (address: string | null) => {
+  const parts = (address ?? '').split(',').map((part) => part.trim()).filter(Boolean);
+  const pincode = /^\d{6}$/.test(parts.at(-1) ?? '') ? parts.pop()! : null;
+  const stateIndex = [...parts].reverse().findIndex((part) =>
+    GST_STATES.some((state) => state.name.toLowerCase() === part.toLowerCase()),
+  );
+  const actualStateIndex = stateIndex < 0 ? -1 : parts.length - 1 - stateIndex;
+  const state = actualStateIndex >= 0 ? parts.splice(actualStateIndex, 1)[0]! : null;
+  const stateCode = state
+    ? GST_STATES.find((entry) => entry.name.toLowerCase() === state.toLowerCase())?.code ?? null
+    : null;
+  const city = state && parts.length ? parts.pop()! : null;
+  return { addressLine1: parts.join(', ') || null, city, state, stateCode, pincode };
+};
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -80,7 +97,8 @@ const toItem = (row: Row, withLines: boolean): QuotationItem => ({
             productName: line.product.name,
             sizeMm: line.product.sizeMm,
             piecesPerBox: line.product.piecesPerBox,
-    baseUom: line.product.baseUom,
+            weightKg: line.product.weightKg === null ? null : Number(line.product.weightKg),
+            baseUom: line.product.baseUom,
             boxes: line.boxes,
             pieces: line.pieces,
             qtyBoxes: Number(line.qtyBoxes),
@@ -137,10 +155,16 @@ export class PrismaQuotationRepository implements QuotationRepository {
     });
     if (!row) return null;
 
-    const setting = await this.prisma.setting.findUnique({ where: { key: 'quotation.terms' } });
+    const [setting, customer] = await Promise.all([
+      this.prisma.setting.findUnique({ where: { key: 'quotation.terms' } }),
+      row.customerId
+        ? this.prisma.customer.findUnique({ where: { id: row.customerId }, select: { pincode: true } })
+        : null,
+    ]);
 
     return {
       quotation: toItem(row as unknown as Row, true),
+      customerPincode: customer?.pincode ?? null,
       company: toPartyBlock(row.branch.company),
       branch: toPartyBlock({ ...row.branch, legalName: null }),
       terms: toLines(setting?.value),
@@ -180,6 +204,15 @@ export class PrismaQuotationRepository implements QuotationRepository {
     return { name: customer.name, address: address || null, mobile: customer.phone };
   }
 
+  async customerByPhone(phone: string): Promise<{ id: UUID; name: string; mobile: string | null } | null> {
+    const customer = await this.prisma.customer.findFirst({
+      where: { deletedAt: null, phone: { endsWith: phone } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, name: true, phone: true },
+    });
+    return customer ? { id: customer.id, name: customer.name, mobile: customer.phone } : null;
+  }
+
   /**
    * Gives a walk-in quotation a customer master record.
    *
@@ -195,6 +228,7 @@ export class PrismaQuotationRepository implements QuotationRepository {
     actorId: UUID,
   ): Promise<{ customerId: UUID; customerCode: string; created: boolean }> {
     return this.prisma.$transaction(async (tx) => {
+      const location = quotationCustomerLocation(details.address);
       const existing = await tx.customer.findFirst({
         where: { deletedAt: null, phone: { endsWith: details.phone } },
         select: { id: true, code: true },
@@ -202,6 +236,17 @@ export class PrismaQuotationRepository implements QuotationRepository {
       });
 
       if (existing) {
+        await tx.customer.update({
+          where: { id: existing.id },
+          data: {
+            ...(location.addressLine1 ? { addressLine1: location.addressLine1 } : {}),
+            ...(location.city ? { city: location.city } : {}),
+            ...(location.state ? { state: location.state } : {}),
+            ...(location.stateCode ? { stateCode: location.stateCode } : {}),
+            ...(location.pincode ? { pincode: location.pincode } : {}),
+            updatedBy: actorId,
+          },
+        });
         await tx.quotation.update({
           where: { id },
           data: { customerId: existing.id, updatedBy: actorId },
@@ -215,7 +260,11 @@ export class PrismaQuotationRepository implements QuotationRepository {
           code: `CUST-${String(count + 1).padStart(6, '0')}`,
           name: details.name,
           phone: details.phone,
-          addressLine1: details.address,
+          addressLine1: location.addressLine1,
+          city: location.city,
+          state: location.state,
+          stateCode: location.stateCode,
+          pincode: location.pincode,
           // A walk-in buys over the counter, so no credit until somebody grants it.
           creditDays: 0,
           creditLimit: 0,
@@ -270,10 +319,10 @@ export class PrismaQuotationRepository implements QuotationRepository {
             baseUom: product.baseUom,
             mrp: product.mrp === null ? null : Number(product.mrp),
             gstRate: Number(product.gstRate),
-            landingCost: product.landingCost === null ? null : Number(product.landingCost),
-            displayPrice: price ? Number(price.displayPrice) : null,
-            minSellingPrice: price ? Number(price.minSellingPrice) : null,
-            sellingPrice: price ? Number(price.sellingPrice) : null,
+            landingCost: product.landingCost === null ? null : excludeGst(Number(product.landingCost), Number(product.gstRate)),
+            displayPrice: price ? excludeGst(Number(price.displayPrice), Number(product.gstRate)) : null,
+            minSellingPrice: price ? excludeGst(Number(price.minSellingPrice), Number(product.gstRate)) : null,
+            sellingPrice: price ? excludeGst(Number(price.sellingPrice), Number(product.gstRate)) : null,
           },
         ];
       }),
@@ -287,7 +336,8 @@ export class PrismaQuotationRepository implements QuotationRepository {
     const where: Prisma.QuotationWhereInput = {
       deletedAt: null,
       ...(filter.customerId ? { customerId: filter.customerId } : {}),
-      ...(filter.branchId ? { branchId: filter.branchId } : {}),
+      ...(filter.branchId ? { branchId: filter.branchId } : filter.branchIds ? { branchId: { in: filter.branchIds } } : {}),
+      ...(filter.salesmanUserId ? { salesmanUserId: filter.salesmanUserId } : {}),
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.fromDate || filter.toDate
         ? {
@@ -312,7 +362,7 @@ export class PrismaQuotationRepository implements QuotationRepository {
       this.prisma.quotation.findMany({
         where,
         include,
-        orderBy: { quotationDate: 'desc' },
+        orderBy: { quotationNumber: 'desc' },
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
@@ -361,7 +411,7 @@ export class PrismaQuotationRepository implements QuotationRepository {
         roundOff: data.roundOff,
         grandTotal: data.grandTotal,
         createdBy,
-        lines: { create: data.lines },
+        lines: { create: data.lines.map((line, index) => ({ ...line, lineNo: index + 1 })) },
       },
       include,
     });
@@ -377,11 +427,11 @@ export class PrismaQuotationRepository implements QuotationRepository {
     const row = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.quotation.findFirst({ where: { id, deletedAt: null } });
       if (!existing) throw new NotFoundError('Quotation not found');
-      if (existing.status !== 'DRAFT') {
-        throw new ValidationError('Only draft quotations can be edited');
+      if (existing.status !== 'DRAFT' && existing.status !== 'SENT') {
+        throw new ValidationError('Only draft or sent quotations can be edited');
       }
       const updated = await tx.quotation.updateMany({
-        where: { id, version },
+        where: { id, version, status: { in: ['DRAFT', 'SENT'] } },
         data: {
           customerId: data.customerId,
           customerName: data.customerName,
@@ -409,7 +459,7 @@ export class PrismaQuotationRepository implements QuotationRepository {
       }
       await tx.quotationLine.deleteMany({ where: { quotationId: id } });
       await tx.quotationLine.createMany({
-        data: data.lines.map((line) => ({ ...line, quotationId: id })),
+        data: data.lines.map((line, index) => ({ ...line, quotationId: id, lineNo: index + 1 })),
       });
       return tx.quotation.findFirstOrThrow({ where: { id }, include });
     });

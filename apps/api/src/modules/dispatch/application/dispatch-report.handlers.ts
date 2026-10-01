@@ -2,6 +2,7 @@ import { Inject } from '@nestjs/common';
 import { QueryHandler, type IQueryHandler } from '@nestjs/cqrs';
 import { ValidationError } from '@tiles-erp/shared';
 import type {
+  DispatchedProductReport,
   DriverCashReport,
   FreightCollectionReport,
   PendingDispatchAgeReport,
@@ -62,6 +63,28 @@ export class DriverCashQuery {
 
 export class PendingAgeingQuery {
   constructor(public readonly branchId?: UUID) {}
+}
+
+export class DispatchedProductsQuery {
+  constructor(
+    public readonly date: string,
+    public readonly branchId?: UUID,
+  ) {}
+}
+
+@QueryHandler(DispatchedProductsQuery)
+export class DispatchedProductsHandler
+  implements IQueryHandler<DispatchedProductsQuery, DispatchedProductReport>
+{
+  constructor(
+    @Inject(DISPATCH_REPORT_REPOSITORY) private readonly reports: DispatchReportRepository,
+  ) {}
+
+  execute(query: DispatchedProductsQuery): Promise<DispatchedProductReport> {
+    const on = new Date(query.date);
+    if (Number.isNaN(on.getTime())) throw new ValidationError('That date could not be read');
+    return this.reports.dispatchedProducts(on, query.branchId);
+  }
 }
 
 @QueryHandler(FreightCollectionQuery)

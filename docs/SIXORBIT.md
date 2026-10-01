@@ -267,7 +267,8 @@ duplicating five hundred lines.
 **What their payload actually says.** `measured_qty` is the area of one **piece**, and
 `package_quantity` is pieces per **box**, so `sqftPerBox` is the product of the two. Their
 own data proves it: *AV ROVEN GREY E 4X2 (3)* is a 4ft x 2ft tile and `measured_qty` reads
-exactly `8.0000`. `sku` is empty on every row, so `variation_number` becomes ours.
+exactly `8.0000`. `variation_number` becomes the ERP SKU even when SixOrbit also returns
+an older submitted `sku` value.
 `purchase_price` is the landing cost — **not** `price_with_tax`, which is the selling price
 grossed up and would put 18% GST into COGS.
 
@@ -350,19 +351,23 @@ preserved. It preserved nothing. The read and write shapes are named differently
 against `hsn`, `tax` against `item_tax`, `package_quantity` against `package_qty` — so a
 read field was never going to be read back by that endpoint. All the spread did was post
 ninety unrecognised keys at a form that accepts thirty-five, and their validator answered
-`Please Provide valid item name`. Their own documented edit request is their create request
-plus `isvid`; that is now what goes out, and a test asserts an edit sends nothing beyond it.
+`Please Provide valid item name`. Product edits now send a single JSON object in the
+multipart `data` field with the fields used by the Avthar tenant's edit form. Product
+creates also send a single JSON object in the multipart `data` field.
 
 **The payload is on the log row.** Their rejections name a field and never quote the value,
 so a failed write is undiagnosable from the response alone — the query string carries none
 of the body. `requestBody` stores the JSON exactly as posted, redacted and capped at 4 KB,
 and the sync console shows it pretty-printed beside the response.
 
-**The duplicate guard.** No task in their API accepts an external reference, so a create
-that times out after they committed it would duplicate on retry. Every create therefore
-searches `variation/fetch&searchtext=<sku>` first and adopts an exact `variation_number`
-match instead. A *failed* search is treated as a failure, not as "no duplicate exists" —
-that distinction is the whole point.
+**Creating a variation.** The add request sends `sku_code: ""`; SixOrbit generates a
+`variation_number` and returns it in `data.obj[0]`. ERP saves the returned `isvid` first,
+then replaces its local placeholder SKU with that number. If the number is absent, ERP
+fetches the variation by `isvid`. Queued unlinked creates get one attempt, since a timeout
+after a remote commit cannot be safely retried using the old local SKU. Before an add,
+an exact remote `variation_number` or `sku` match is adopted when the search finds one.
+For a new SKU, SixOrbit's `variation/fetch` responds with failed code `20004` and
+`No Variation found.`; that specific response means the add can proceed.
 
 **Their `isvid` is the anchor, and is written down the moment it is known.** It is their
 primary key; `product.sixorbitId` holds it, uniquely, and its presence is the only thing

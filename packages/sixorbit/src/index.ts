@@ -19,4 +19,6 @@ export * from './infrastructure/prisma-sixorbit-config.repository';
 export * from './infrastructure/prisma-sixorbit-sync-log.repository';
 export * from './infrastructure/sixorbit-product-import.service';
 export * from './infrastructure/sixorbit-product-push.service';
+export * from './infrastructure/sixorbit-customer-push.service';
+export * from './infrastructure/sixorbit-sales-order-push.service';
 export * from './infrastructure/sixorbit-import-status.store';

@@ -71,7 +71,7 @@ export class PrismaUsersRepository implements UsersRepository {
     return buildPaginated(rows.map(toItem), query.page, query.pageSize, total);
   }
 
-  async listSalesmen(): Promise<SalesmanItem[]> {
+  async listSalesmen(branchId?: string): Promise<SalesmanItem[]> {
     const rows = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
@@ -79,6 +79,7 @@ export class PrismaUsersRepository implements UsersRepository {
         // A maintenance login is not a salesman, and must not be selectable as one on
         // a quotation or an order.
         isHidden: false,
+        ...(branchId ? { branches: { some: { branchId } } } : {}),
         roles: { some: { role: { isSalesRole: true, deletedAt: null } } },
       },
       select: { id: true, firstName: true, lastName: true, email: true },

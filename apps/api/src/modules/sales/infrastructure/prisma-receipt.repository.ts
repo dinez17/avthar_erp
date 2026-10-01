@@ -121,6 +121,14 @@ export class PrismaReceiptRepository implements ReceiptRepository {
       ...(filter.customerId ? { customerId: filter.customerId } : {}),
       ...(filter.branchId ? { branchId: filter.branchId } : {}),
       ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.fromDate || filter.toDate
+        ? {
+            receiptDate: {
+              ...(filter.fromDate ? { gte: filter.fromDate } : {}),
+              ...(filter.toDate ? { lte: filter.toDate } : {}),
+            },
+          }
+        : {}),
       ...(query.search
         ? {
             OR: [
@@ -242,14 +250,24 @@ export class PrismaReceiptRepository implements ReceiptRepository {
       for (const allocation of receipt.allocations) {
         const invoice = await tx.salesInvoice.findFirst({
           where: { id: allocation.salesInvoiceId, deletedAt: null },
-          select: { invoiceNumber: true, status: true, grandTotal: true, paidAmount: true },
+          select: {
+            invoiceNumber: true,
+            status: true,
+            grandTotal: true,
+            paidAmount: true,
+            returnedAmount: true,
+          },
         });
         if (!invoice) throw new ValidationError('An allocated invoice no longer exists');
         if (invoice.status !== 'POSTED') {
           throw new ValidationError(`${invoice.invoiceNumber} is not a posted invoice`);
         }
 
-        const balance = round2(Number(invoice.grandTotal) - Number(invoice.paidAmount));
+        const balance = round2(
+          Number(invoice.grandTotal) -
+            Number(invoice.paidAmount) -
+            Number(invoice.returnedAmount),
+        );
         const amount = Number(allocation.amount);
         if (amount > balance + 0.005) {
           throw new ValidationError(
@@ -384,6 +402,7 @@ export class PrismaReceiptRepository implements ReceiptRepository {
         dueDate: true,
         grandTotal: true,
         paidAmount: true,
+        returnedAmount: true,
       },
       orderBy: { invoiceDate: 'asc' },
     });
@@ -392,6 +411,7 @@ export class PrismaReceiptRepository implements ReceiptRepository {
       .map((row) => {
         const grandTotal = Number(row.grandTotal);
         const paidAmount = Number(row.paidAmount);
+        const returnedAmount = Number(row.returnedAmount);
         return {
           salesInvoiceId: row.id,
           invoiceNumber: row.invoiceNumber,
@@ -399,7 +419,7 @@ export class PrismaReceiptRepository implements ReceiptRepository {
           dueDate: row.dueDate ? row.dueDate.toISOString() : null,
           grandTotal,
           paidAmount,
-          balanceAmount: round2(grandTotal - paidAmount),
+          balanceAmount: round2(grandTotal - paidAmount - returnedAmount),
           overdueDays: Math.max(overdueDays(row.dueDate, row.invoiceDate), 0),
         };
       })
@@ -463,16 +483,35 @@ export class PrismaReceiptRepository implements ReceiptRepository {
     });
     if (!customer) throw new NotFoundError('Customer not found');
 
-    const [invoices, receipts] = await Promise.all([
+    const [invoices, returns, receipts, refunds] = await Promise.all([
       this.prisma.salesInvoice.findMany({
         where: { customerId, deletedAt: null, status: 'POSTED' },
         select: { invoiceNumber: true, invoiceDate: true, grandTotal: true },
         orderBy: { invoiceDate: 'asc' },
       }),
+      this.prisma.salesReturn.findMany({
+        where: { customerId },
+        select: { returnNumber: true, returnDate: true, grandTotal: true },
+        orderBy: { returnDate: 'asc' },
+      }),
       this.prisma.customerReceipt.findMany({
         where: { customerId, deletedAt: null, status: 'POSTED' },
         select: { receiptNumber: true, receiptDate: true, amount: true, mode: true },
         orderBy: { receiptDate: 'asc' },
+      }),
+      this.prisma.cashEntry.findMany({
+        where: {
+          reversedAt: null,
+          OR: [
+            {
+              refType: 'SALES_RETURN_REFUND',
+              refId: { in: (await this.prisma.salesReturn.findMany({ where: { customerId }, select: { id: true } })).map((row) => row.id) },
+            },
+            { refType: 'CUSTOMER_REFUND', refId: customerId },
+          ],
+        },
+        select: { entryDate: true, amount: true, refType: true, refNumber: true, referenceNo: true },
+        orderBy: { entryDate: 'asc' },
       }),
     ]);
 
@@ -488,6 +527,17 @@ export class PrismaReceiptRepository implements ReceiptRepository {
           credit: 0,
         },
       })),
+      ...returns.map((returned) => ({
+        date: returned.returnDate,
+        entry: {
+          date: returned.returnDate.toISOString(),
+          type: 'SALES_RETURN' as const,
+          reference: returned.returnNumber,
+          particulars: 'Sales return',
+          debit: 0,
+          credit: Number(returned.grandTotal),
+        },
+      })),
       ...receipts.map((receipt) => ({
         date: receipt.receiptDate,
         entry: {
@@ -497,6 +547,17 @@ export class PrismaReceiptRepository implements ReceiptRepository {
           particulars: `Receipt (${receipt.mode.toLowerCase()})`,
           debit: 0,
           credit: Number(receipt.amount),
+        },
+      })),
+      ...refunds.map((refund) => ({
+        date: refund.entryDate,
+        entry: {
+          date: refund.entryDate.toISOString(),
+          type: 'REFUND' as const,
+          reference: refund.referenceNo ?? refund.refNumber ?? '—',
+          particulars: refund.refType === 'CUSTOMER_REFUND' ? 'Customer payment refund' : 'Sales return refund paid',
+          debit: Number(refund.amount),
+          credit: 0,
         },
       })),
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -570,6 +631,7 @@ export class PrismaReceiptRepository implements ReceiptRepository {
         dueDate: true,
         grandTotal: true,
         paidAmount: true,
+        returnedAmount: true,
         customer: { select: { name: true, phone: true, creditLimit: true } },
       },
     });
@@ -577,7 +639,11 @@ export class PrismaReceiptRepository implements ReceiptRepository {
     const byCustomer = new Map<string, OutstandingRow>();
 
     for (const invoice of invoices) {
-      const balance = round2(Number(invoice.grandTotal) - Number(invoice.paidAmount));
+      const balance = round2(
+        Number(invoice.grandTotal) -
+          Number(invoice.paidAmount) -
+          Number(invoice.returnedAmount),
+      );
       if (balance <= 0.005) continue;
 
       const row = byCustomer.get(invoice.customerId) ?? {

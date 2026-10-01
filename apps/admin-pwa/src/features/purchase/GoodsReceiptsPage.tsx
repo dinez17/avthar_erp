@@ -2,6 +2,7 @@ import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import {
   Alert,
+  Autocomplete,
   Button,
   Chip,
   Dialog,
@@ -29,6 +30,7 @@ import { DataTable } from '../../components/DataTable';
 import { useBranches } from '../products/branch-prices-api';
 import { GoodsReceiptDialog } from './GoodsReceiptDialog';
 import { useGoodsReceipt, useGoodsReceipts, useSuppliers } from './api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -39,7 +41,7 @@ export function GoodsReceiptsPage(): JSX.Element {
   const suppliers = useSuppliers();
   const branches = useBranches();
   const [supplierId, setSupplierId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
 
   const { data, isFetching } = useGoodsReceipts(pagination.query, {
     supplierId: supplierId || undefined,
@@ -123,25 +125,19 @@ export function GoodsReceiptsPage(): JSX.Element {
         )}
 
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <TextField
-            select
-            label="Supplier"
+          <Autocomplete
             size="small"
-            fullWidth={false}
-            value={supplierId}
-            onChange={(e) => {
-              setSupplierId(e.target.value);
+            options={suppliers.data ?? []}
+            getOptionLabel={(option) => `${option.name}${option.phone ? ` · ${option.phone}` : ''}`}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            value={(suppliers.data ?? []).find((supplier) => supplier.id === supplierId) ?? null}
+            onChange={(_, supplier) => {
+              setSupplierId(supplier?.id ?? '');
               pagination.setPage(1);
             }}
-            sx={{ width: 200 }}
-          >
-            <MenuItem value="">All suppliers</MenuItem>
-            {(suppliers.data ?? []).map((s) => (
-              <MenuItem key={s.id} value={s.id}>
-                {s.name}
-              </MenuItem>
-            ))}
-          </TextField>
+            sx={{ width: { xs: '100%', sm: 280 } }}
+            renderInput={(params) => <TextField {...params} label="Supplier" placeholder="All suppliers" />}
+          />
           <TextField
             select
             label="Branch"

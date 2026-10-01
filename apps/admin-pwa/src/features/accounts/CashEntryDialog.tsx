@@ -1,5 +1,6 @@
 import {
   Alert,
+  Autocomplete,
   Button,
   Dialog,
   DialogActions,
@@ -14,16 +15,18 @@ import {
 } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
 import { transferProblem, wouldOverdraw } from '@tiles-erp/shared';
-import type { LedgerAccountItem } from '@tiles-erp/shared-types';
+import type { LedgerAccountItem, PartyItem } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
 import { useCashTransfer, useExpenseHeads, usePostCashEntry } from './api';
+import { useCustomers } from '../sales/api';
 
-type Kind = 'EXPENSE' | 'RECEIPT' | 'PAYMENT' | 'TRANSFER';
+type Kind = 'EXPENSE' | 'RECEIPT' | 'PAYMENT' | 'CUSTOMER_REFUND' | 'TRANSFER';
 
 const KINDS: { value: Kind; label: string; hint: string }[] = [
   { value: 'EXPENSE', label: 'Expense', hint: 'Money spent on something' },
   { value: 'RECEIPT', label: 'Money in', hint: 'Cash or a credit not tied to an invoice' },
   { value: 'PAYMENT', label: 'Money out', hint: 'A payment not tied to a supplier bill' },
+  { value: 'CUSTOMER_REFUND', label: 'Customer refund', hint: 'Return money to a customer and update their ledger' },
   { value: 'TRANSFER', label: 'Transfer', hint: 'Between two of your own accounts' },
 ];
 
@@ -65,11 +68,13 @@ export function CashEntryDialog({
   const [date, setDate] = useState(todayLocal());
   const [amount, setAmount] = useState('');
   const [headId, setHeadId] = useState('');
+  const [customer, setCustomer] = useState<PartyItem | null>(null);
   const [referenceNo, setReferenceNo] = useState('');
   const [narration, setNarration] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const { data: heads = [] } = useExpenseHeads();
+  const { data: customers = [], isFetching: customersLoading } = useCustomers();
   const post = usePostCashEntry();
   const transfer = useCashTransfer();
 
@@ -81,6 +86,7 @@ export function CashEntryDialog({
     setDate(todayLocal());
     setAmount('');
     setHeadId('');
+    setCustomer(null);
     setReferenceNo('');
     setNarration('');
     setError(null);
@@ -88,7 +94,7 @@ export function CashEntryDialog({
 
   const source = useMemo(() => accounts.find((a) => a.id === from), [accounts, from]);
   const value = Number(amount) || 0;
-  const leaving = kind === 'EXPENSE' || kind === 'PAYMENT' || kind === 'TRANSFER';
+  const leaving = kind === 'EXPENSE' || kind === 'PAYMENT' || kind === 'CUSTOMER_REFUND' || kind === 'TRANSFER';
 
   /**
    * Warned before the request rather than after.
@@ -110,6 +116,8 @@ export function CashEntryDialog({
           ? 'Enter an amount greater than zero'
           : kind === 'EXPENSE' && !headId
             ? 'Choose what the expense is for'
+            : kind === 'CUSTOMER_REFUND' && !customer
+              ? 'Choose the customer receiving the refund'
             : null;
 
   const submit = async (): Promise<void> => {
@@ -131,13 +139,16 @@ export function CashEntryDialog({
         await post.mutateAsync({
           accountId: from,
           entryDate,
-          type: kind,
+          type: kind === 'CUSTOMER_REFUND' ? 'PAYMENT' : kind,
           amount: value,
+          customerId: kind === 'CUSTOMER_REFUND' ? customer?.id : undefined,
           expenseHeadId: kind === 'EXPENSE' ? headId : undefined,
           referenceNo: referenceNo.trim() || undefined,
           narration: narration.trim() || undefined,
         });
-        onPosted(`${money(value)} posted to ${source?.name}`);
+        onPosted(kind === 'CUSTOMER_REFUND'
+          ? `${money(value)} refunded to ${customer?.name}`
+          : `${money(value)} posted to ${source?.name}`);
       }
       onClose();
     } catch (failure) {
@@ -153,7 +164,8 @@ export function CashEntryDialog({
       <Tabs
         value={kind}
         onChange={(_, next: Kind) => setKind(next)}
-        variant="fullWidth"
+        variant="scrollable"
+        scrollButtons="auto"
         sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
       >
         {KINDS.map((option) => (
@@ -262,6 +274,20 @@ export function CashEntryDialog({
                 </MenuItem>
               ))}
             </TextField>
+          )}
+
+          {kind === 'CUSTOMER_REFUND' && (
+            <Autocomplete
+              options={customers}
+              value={customer}
+              loading={customersLoading}
+              getOptionLabel={(option) => `${option.name}${option.phone ? ` · ${option.phone}` : ''}`}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              onChange={(_, value) => setCustomer(value)}
+              renderInput={(params) => (
+                <TextField {...params} size="small" label="Customer *" placeholder="Search name or phone" />
+              )}
+            />
           )}
 
           <TextField

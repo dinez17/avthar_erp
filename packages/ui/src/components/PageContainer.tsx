@@ -29,12 +29,12 @@ export function PageContainer({
             {title}
           </Typography>
           {subtitle && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
               {subtitle}
             </Typography>
           )}
         </Box>
-        {actions && <Box>{actions}</Box>}
+        {actions && <Box sx={{ width: { xs: '100%', sm: 'auto' } }}>{actions}</Box>}
       </Stack>
       {children}
     </Box>

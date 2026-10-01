@@ -25,11 +25,12 @@ import { PaginationQueryDto } from '../../../../core/http/dto/pagination-query.d
 const UOMS: ProductUom[] = ['BOX', 'PIECE', 'SQFT'];
 
 export class CreateProductDto {
-  @ApiProperty({ example: 'KAJ-VIT-600-IVR' })
+  @ApiPropertyOptional({ example: 'KAJ-VIT-600-IVR', description: 'Generated when omitted' })
   @IsString()
   @MinLength(2)
   @MaxLength(64)
-  sku!: string;
+  @IsOptional()
+  sku?: string;
 
   @ApiProperty({ example: 'Kajaria Vitrified 600x600 Ivory' })
   @IsString()
@@ -78,6 +79,13 @@ export class CreateProductDto {
   @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0.0001)
   sqftPerBox!: number;
+
+  @ApiPropertyOptional({ example: 15, minimum: 0, description: 'Product weight in kilograms' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  @IsOptional()
+  weightKg?: number;
 
   @ApiPropertyOptional({ enum: UOMS, default: 'BOX' })
   @IsIn(UOMS)
@@ -188,6 +196,13 @@ export class UpdateProductDto {
   @Min(0.0001)
   @IsOptional()
   sqftPerBox?: number;
+
+  @ApiPropertyOptional({ minimum: 0, nullable: true, description: 'Product weight in kilograms' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  @IsOptional()
+  weightKg?: number;
 
   @ApiPropertyOptional({ enum: UOMS })
   @IsIn(UOMS)

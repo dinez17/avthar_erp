@@ -56,7 +56,7 @@ export interface UpdateOrgNodeData {
  * implementations; the handlers stay generic.
  */
 export interface OrgNodeRepository {
-  list(query: PaginationQuery, parentId?: UUID): Promise<Paginated<OrgNodeItem>>;
+  list(query: PaginationQuery, parentId?: UUID, branchIds?: UUID[]): Promise<Paginated<OrgNodeItem>>;
   create(data: CreateOrgNodeData): Promise<OrgNodeItem>;
   update(id: UUID, data: UpdateOrgNodeData): Promise<OrgNodeItem>;
   softDelete(id: UUID, deletedBy: UUID): Promise<void>;

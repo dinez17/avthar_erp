@@ -1,5 +1,6 @@
 import PrintIcon from '@mui/icons-material/Print';
-import TableViewIcon from '@mui/icons-material/TableView';
+import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   Alert,
   Button,
@@ -18,18 +19,21 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AGEING_BUCKETS, AGEING_BUCKET_LABELS, type CsvValue } from '@tiles-erp/shared';
 import { PageContainer } from '@tiles-erp/ui';
 import { ApiError } from '../../lib/api-client';
-import { downloadCsv } from '../../lib/download';
+import { useAuth } from '../../auth/AuthProvider';
+import { downloadTableExcel, downloadTablePdf, type ExportColumn } from '../../components/ListExportButtons';
 import { useBranches } from '../products/branch-prices-api';
 import {
+  useDispatchedProducts,
   useDriverCash,
   useFreightCollection,
   usePendingAgeing,
   useVehicleRunning,
 } from './dispatch-reports-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,6 +52,7 @@ const TABS = [
   { key: 'vehicles', label: 'Vehicles' },
   { key: 'drivers', label: 'Driver cash' },
   { key: 'backlog', label: 'Waiting to go' },
+  { key: 'products', label: 'Dispatched products' },
 ] as const;
 
 /**
@@ -58,19 +63,31 @@ const TABS = [
  * loading all four to look at one would be three wasted queries every time.
  */
 export function DispatchReportsPage(): JSX.Element {
+  const { user } = useAuth();
   const branches = useBranches();
   const [tab, setTab] = useState(0);
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
+  const [selectedDate, setSelectedDate] = useState(today);
+  const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
+  const availableBranches = useMemo(
+    () => (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id)),
+    [branches.data, canChangeBranch, user?.branchIds],
+  );
+  useEffect(() => {
+    if (canChangeBranch) return;
+    setBranchId((current) => user?.branchIds.includes(current) ? current : (availableBranches[0]?.id ?? ''));
+  }, [availableBranches, canChangeBranch, user?.branchIds]);
 
   const freight = useFreightCollection(from, to, branchId, tab === 0);
   const vehicles = useVehicleRunning(from, to, branchId, tab === 1);
   const drivers = useDriverCash(from, to, branchId, tab === 2);
   const backlog = usePendingAgeing(branchId, tab === 3);
+  const products = useDispatchedProducts(selectedDate, branchId, tab === 4 && (canChangeBranch || Boolean(branchId)));
 
   const period = from.slice(0, 7);
-  const active = [freight, vehicles, drivers, backlog][tab];
+  const active = [freight, vehicles, drivers, backlog, products][tab];
   const loading = active?.isLoading ?? false;
   // The API's own message, not a generic line: a missing permission or an unreadable
   // date says so, instead of looking like a report with nothing in it.
@@ -86,7 +103,7 @@ export function DispatchReportsPage(): JSX.Element {
       title="Dispatch reports"
       subtitle="Freight owed, what the lorries cost, the driver's cash, and what is still waiting."
       actions={
-        <Stack direction="row" spacing={1}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ width: { xs: '100%', md: 'auto' } }}>
           <TextField
             select
             label="Branch"
@@ -96,14 +113,14 @@ export function DispatchReportsPage(): JSX.Element {
             onChange={(e) => setBranchId(e.target.value)}
             sx={{ width: 170 }}
           >
-            <MenuItem value="">All branches</MenuItem>
-            {(branches.data ?? []).map((branch) => (
+            {canChangeBranch && <MenuItem value="">All branches</MenuItem>}
+            {availableBranches.map((branch) => (
               <MenuItem key={branch.id} value={branch.id}>
                 {branch.name}
               </MenuItem>
             ))}
           </TextField>
-          <TextField
+          {tab !== 4 && <TextField
             label="From"
             type="date"
             size="small"
@@ -112,8 +129,8 @@ export function DispatchReportsPage(): JSX.Element {
             InputLabelProps={{ shrink: true }}
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-          />
-          <TextField
+          />}
+          {tab !== 4 && <TextField
             label="To"
             type="date"
             size="small"
@@ -122,7 +139,15 @@ export function DispatchReportsPage(): JSX.Element {
             InputLabelProps={{ shrink: true }}
             value={to}
             onChange={(e) => setTo(e.target.value)}
-          />
+          />}
+          {tab === 4 && <TextField
+            label="Date"
+            type="date"
+            size="small"
+            InputLabelProps={{ shrink: true }}
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+          />}
           <Button
             className="print-hidden"
             variant="outlined"
@@ -139,6 +164,8 @@ export function DispatchReportsPage(): JSX.Element {
           value={tab}
           onChange={(_, next: number) => setTab(next)}
           sx={{ borderBottom: 1, borderColor: 'divider', minHeight: 40 }}
+          variant="scrollable"
+          scrollButtons="auto"
         >
           {TABS.map((each) => (
             <Tab key={each.key} label={each.label} sx={{ minHeight: 40, textTransform: 'none' }} />
@@ -505,6 +532,40 @@ export function DispatchReportsPage(): JSX.Element {
             </Section>
           </>
         )}
+
+        {tab === 4 && products.data && (
+          <Section
+            title="Product-wise dispatched items"
+            filename={`dispatched-products-${selectedDate}.csv`}
+            headers={['Time', 'Invoice', 'Customer', 'Branch', 'SKU', 'Product', 'Size', 'Boxes', 'Pieces', 'Qty boxes', 'Actual stock', 'Stock updated']}
+            rows={products.data.rows.map((row) => [
+              new Date(row.dispatchedAt).toLocaleString('en-IN'), row.invoiceNumber,
+              row.customerName, row.branchName, row.sku, row.productName, row.sizeMm ?? '',
+              row.boxes, row.pieces, row.qtyBoxes, row.actualStockBoxes,
+              row.stockUpdatedAt ? new Date(row.stockUpdatedAt).toLocaleString('en-IN') : '',
+            ])}
+          >
+            <Table size="small" sx={{ '& td, & th': { py: 0.5 }, minWidth: 1100 }}>
+              <TableHead><TableRow>
+                <TableCell>Time / Invoice</TableCell><TableCell>Customer</TableCell><TableCell>Product</TableCell>
+                <TableCell>Size</TableCell><TableCell align="right">Box</TableCell><TableCell align="right">Pcs</TableCell>
+                <TableCell align="right">Qty</TableCell><TableCell align="right">Actual stock</TableCell><TableCell>Stock last updated</TableCell>
+              </TableRow></TableHead>
+              <TableBody>
+                {products.data.rows.map((row, index) => <TableRow key={`${row.salesInvoiceId}-${row.productId}-${index}`} hover>
+                  <TableCell><Typography variant="body2">{new Date(row.dispatchedAt).toLocaleTimeString('en-IN')}</Typography><Typography variant="caption" color="text.secondary">{row.invoiceNumber}</Typography></TableCell>
+                  <TableCell><Typography variant="body2">{row.customerName}</Typography><Typography variant="caption" color="text.secondary">{row.branchName}</Typography></TableCell>
+                  <TableCell><Typography variant="body2">{row.productName}</Typography><Typography variant="caption" color="text.secondary">{row.sku}</Typography></TableCell>
+                  <TableCell>{row.sizeMm ?? '—'}</TableCell><TableCell align="right">{row.boxes}</TableCell><TableCell align="right">{row.pieces}</TableCell>
+                  <TableCell align="right">{number(row.qtyBoxes)}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{number(row.actualStockBoxes)}</TableCell>
+                  <TableCell>{row.stockUpdatedAt ? new Date(row.stockUpdatedAt).toLocaleString('en-IN') : '—'}</TableCell>
+                </TableRow>)}
+                {products.data.rows.length === 0 && <Empty colSpan={9} />}
+                <Totals cells={['', '', '', products.data.totals.boxes, products.data.totals.pieces, number(products.data.totals.qtyBoxes), '', '']} />
+              </TableBody>
+            </Table>
+          </Section>
+        )}
       </Stack>
     </PageContainer>
   );
@@ -524,19 +585,18 @@ function Section({
   rows: CsvValue[][];
   children: React.ReactNode;
 }): JSX.Element {
+  type Row = Record<string, CsvValue>;
+  const exportRows: Row[] = rows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
+  const exportColumns: ExportColumn<Row>[] = headers.map((header) => ({ header, value: (row) => String(row[header] ?? '') }));
+  const baseName = filename.replace(/\.csv$/i, '');
   return (
     <Paper variant="outlined" sx={{ p: 1.5 }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
         <Typography variant="subtitle2">{title}</Typography>
-        <Button
-          className="print-hidden"
-          size="small"
-          startIcon={<TableViewIcon />}
-          disabled={rows.length === 0}
-          onClick={() => downloadCsv(filename, headers, rows)}
-        >
-          CSV
-        </Button>
+        <Stack direction="row" spacing={1} className="print-hidden">
+          <Button size="small" startIcon={<DownloadIcon />} disabled={!rows.length} onClick={() => downloadTableExcel(`${baseName}.xls`, title, exportColumns, exportRows)}>Excel</Button>
+          <Button size="small" startIcon={<PictureAsPdfIcon />} disabled={!rows.length} onClick={() => downloadTablePdf(`${baseName}.pdf`, title, exportColumns, exportRows)}>PDF</Button>
+        </Stack>
       </Stack>
       {children}
     </Paper>

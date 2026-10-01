@@ -18,6 +18,7 @@ const entry = {
   displayPrice: 1400,
   minSellingPrice: 1150,
   sellingPrice: 1250,
+  franchiseeRate: 1200,
   version: 0,
 };
 
@@ -73,6 +74,11 @@ describe('BulkUpdateBranchPricesHandler', () => {
           'actor',
         ),
       ),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      handler.execute(new BulkUpdateBranchPricesCommand(
+        { branchId: 'b1', items: [{ ...entry, franchiseeRate: -1 }] }, 'actor',
+      )),
     ).rejects.toBeInstanceOf(ValidationError);
   });
 });

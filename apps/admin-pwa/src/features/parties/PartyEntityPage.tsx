@@ -2,10 +2,13 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import SyncIcon from '@mui/icons-material/Sync';
 import {
   Alert,
+  Box,
   Button,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -14,17 +17,21 @@ import {
   FormControlLabel,
   IconButton,
   MenuItem,
+  Paper,
   Stack,
   Switch,
+  TablePagination,
   TextField,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { GST_STATES } from '@tiles-erp/config';
-import { usePagination } from '@tiles-erp/hooks';
+import { useDebounce, usePagination } from '@tiles-erp/hooks';
 import { ConfirmDialog, PageContainer, useSaveShortcut } from '@tiles-erp/ui';
 import type { CustomerType, PartyItem } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
@@ -36,6 +43,7 @@ import {
   useNextPartyCode,
   useParties,
   useUpdateParty,
+  usePushCustomerToSixOrbit,
 } from './api';
 import type { PartyEntityConfig } from './config';
 
@@ -159,6 +167,8 @@ const buildPartySchema = (requiresPhone: boolean) =>
 
 /** Management page shared by the Customers and Suppliers masters. */
 export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.Element {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isCustomer = config.kind === 'customer';
   const pagination = usePagination();
   const [stateFilter, setStateFilter] = useState('');
@@ -166,11 +176,19 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
   const createParty = useCreateParty(config.endpoint);
   const updateParty = useUpdateParty(config.endpoint);
   const deleteParty = useDeleteParty(config.endpoint);
+  const pushCustomer = usePushCustomerToSixOrbit();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<PartyItem | null>(null);
   const [deleting, setDeleting] = useState<PartyItem | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [syncFeedback, setSyncFeedback] = useState<{ severity: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [mobileSearch, setMobileSearch] = useState('');
+  const debouncedMobileSearch = useDebounce(mobileSearch, 350);
+
+  useEffect(() => {
+    if (mobile) pagination.setSearch(debouncedMobileSearch);
+  }, [debouncedMobileSearch, mobile, pagination.setSearch]);
 
   const nextCode = useNextPartyCode(config.endpoint, dialogOpen && editing === null);
 
@@ -221,6 +239,21 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
     setDialogOpen(true);
   };
 
+  const syncCustomer = (customer: PartyItem): void => {
+    setSyncFeedback({ severity: 'info', message: `${customer.name}: Syncing with SixOrbit…` });
+    void pushCustomer.mutateAsync(customer.id)
+      .then((result) => setSyncFeedback({
+        severity: 'success',
+        message: result.operation === 'import'
+          ? `${customer.name}: Customer details imported from SixOrbit (${result.sixorbitId}).`
+          : `${customer.name} ${result.operation === 'create' ? 'created' : 'updated'} in SixOrbit (${result.sixorbitId}).`,
+      }))
+      .catch((error: unknown) => setSyncFeedback({
+        severity: 'error',
+        message: `${customer.name}: ${error instanceof Error ? error.message : 'SixOrbit sync failed.'}`,
+      }));
+  };
+
   const onSubmit = form.handleSubmit(async (values) => {
     setServerError(null);
     const payload = {
@@ -246,7 +279,13 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
     };
     try {
       if (editing) {
-        await updateParty.mutateAsync({ id: editing.id, ...payload, version: editing.version });
+        const saved = await updateParty.mutateAsync({ id: editing.id, ...payload, version: editing.version });
+        if (isCustomer && saved.sixorbitId) setSyncFeedback({
+          severity: saved.sixorbitSyncStatus === 'FAILED' ? 'error' : 'success',
+          message: saved.sixorbitSyncStatus === 'FAILED'
+            ? `${saved.name}: Saved in ERP. SixOrbit sync failed: ${saved.sixorbitSyncError ?? 'Please retry sync.'}`
+            : `${saved.name}: Saved and synced with SixOrbit.`,
+        });
       } else {
         await createParty.mutateAsync(payload);
       }
@@ -271,7 +310,15 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
       cols.push(
         { field: 'creditDays', headerName: 'Cr. days', maxWidth: 110 },
         { field: 'creditLimit', headerName: 'Cr. limit ₹', maxWidth: 130 },
+        {
+          field: 'sixorbitSyncStatus', headerName: 'SixOrbit', maxWidth: 145,
+          cellRenderer: (p: ICellRendererParams<PartyItem>) => (
+            <Chip size="small" label={pushCustomer.isPending && pushCustomer.variables === p.data?.id ? 'Syncing…' : p.data?.sixorbitSyncStatus ?? 'NOT_SYNCED'}
+              color={p.data?.sixorbitSyncStatus === 'SYNCED' ? 'success' : p.data?.sixorbitSyncStatus === 'FAILED' ? 'error' : 'default'} />
+          ),
+        },
       );
+      cols.push({ field: 'sixorbitSyncError', headerName: 'Sync response', minWidth: 240, tooltipField: 'sixorbitSyncError' });
     } else {
       cols.push({ field: 'paymentTermDays', headerName: 'Pay days', maxWidth: 120 });
     }
@@ -290,9 +337,16 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
       },
       {
         headerName: '',
-        maxWidth: 100,
+        maxWidth: isCustomer ? 140 : 100,
         cellRenderer: (p: ICellRendererParams<PartyItem>) => (
           <>
+            {isCustomer && <IconButton size="small" aria-label="Push to SixOrbit" disabled={pushCustomer.isPending}
+              title={p.data?.sixorbitSyncError ?? 'Search/add/update in SixOrbit'}
+              onClick={() => {
+                if (!p.data) return;
+                const customer = p.data;
+                syncCustomer(customer);
+              }}>{pushCustomer.isPending && pushCustomer.variables === p.data?.id ? <CircularProgress size={18} /> : <SyncIcon fontSize="small" />}</IconButton>}
             <IconButton size="small" aria-label="Edit" onClick={() => p.data && openEdit(p.data)}>
               <EditIcon fontSize="small" />
             </IconButton>
@@ -308,7 +362,7 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
       },
     );
     return cols;
-  }, [isCustomer]);
+  }, [isCustomer, pushCustomer]);
 
   // Ctrl+S saves without reaching for the mouse.
   useSaveShortcut(() => void onSubmit(), dialogOpen);
@@ -318,23 +372,28 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
       title={config.title}
       subtitle={config.subtitle}
       actions={
-        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate} fullWidth={mobile}>
           New {config.singular}
         </Button>
       }
     >
       <Stack spacing={1}>
+        {syncFeedback && (
+          <Alert severity={syncFeedback.severity} onClose={() => setSyncFeedback(null)}>
+            {syncFeedback.message}
+          </Alert>
+        )}
         <TextField
           select
           label="State"
           size="small"
-          fullWidth={false}
+          fullWidth={mobile}
           value={stateFilter}
           onChange={(e) => {
             setStateFilter(e.target.value);
             pagination.setPage(1);
           }}
-          sx={{ width: 200 }}
+          sx={{ width: { xs: '100%', sm: 200 } }}
         >
           <MenuItem value="">All states</MenuItem>
           {GST_STATES.map((state) => (
@@ -344,21 +403,87 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
           ))}
         </TextField>
 
-        <DataTable
-          rows={data?.items ?? []}
-          columns={columns}
-          meta={data?.meta}
-          pagination={pagination}
-          loading={isFetching}
-          searchPlaceholder="Search by name, code, phone, GSTIN or city…"
-          height={620}
-        />
+        {mobile ? (
+          <Stack spacing={1}>
+            <TextField
+              placeholder="Search by name, code, phone, GSTIN or city…"
+              size="small"
+              fullWidth
+              value={mobileSearch}
+              onChange={(event) => setMobileSearch(event.target.value)}
+            />
+            {!isFetching && (data?.items.length ?? 0) === 0 && (
+              <Alert severity="info">No {config.title.toLowerCase()} match the selected filters.</Alert>
+            )}
+            {(data?.items ?? []).map((party) => (
+              <Paper key={party.id} variant="outlined" sx={{ overflow: 'hidden' }}>
+                <Stack spacing={1} sx={{ p: 1.5 }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary">{party.code}</Typography>
+                      <Typography variant="subtitle2" fontWeight={800}>{party.name}</Typography>
+                      {party.contactPerson && <Typography variant="body2" color="text.secondary">{party.contactPerson}</Typography>}
+                    </Box>
+                    <Chip label={party.isActive ? 'Active' : 'Inactive'} color={party.isActive ? 'success' : 'default'} size="small" />
+                  </Stack>
+                  <Divider />
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1 }}>
+                    <Box><Typography variant="caption" color="text.secondary">Phone</Typography><Typography variant="body2">{party.phone || '—'}</Typography></Box>
+                    <Box><Typography variant="caption" color="text.secondary">City</Typography><Typography variant="body2">{party.city || '—'}</Typography></Box>
+                    {isCustomer && <Box><Typography variant="caption" color="text.secondary">Type</Typography><Typography variant="body2">{CUSTOMER_TYPES.find((type) => type.value === party.type)?.label ?? party.type ?? '—'}</Typography></Box>}
+                    <Box><Typography variant="caption" color="text.secondary">GSTIN</Typography><Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{party.gstin || '—'}</Typography></Box>
+                    {isCustomer && (
+                      <Box sx={{ gridColumn: '1 / -1' }}>
+                        <Typography variant="caption" color="text.secondary">SixOrbit</Typography>
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Chip size="small" label={pushCustomer.isPending && pushCustomer.variables === party.id ? 'Syncing…' : party.sixorbitSyncStatus ?? 'NOT_SYNCED'} color={party.sixorbitSyncStatus === 'SYNCED' ? 'success' : party.sixorbitSyncStatus === 'FAILED' ? 'error' : 'default'} />
+                          {party.sixorbitSyncError && <Typography variant="caption" color="error.main">{party.sixorbitSyncError}</Typography>}
+                        </Stack>
+                      </Box>
+                    )}
+                  </Box>
+                </Stack>
+                <Divider />
+                <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 1, py: 0.5 }}>
+                  {isCustomer && (
+                    <IconButton aria-label="Push to SixOrbit" disabled={pushCustomer.isPending} onClick={() => syncCustomer(party)}>
+                      {pushCustomer.isPending && pushCustomer.variables === party.id ? <CircularProgress size={22} /> : <SyncIcon />}
+                    </IconButton>
+                  )}
+                  <IconButton aria-label={`Edit ${party.name}`} onClick={() => openEdit(party)}><EditIcon /></IconButton>
+                  <IconButton aria-label={`Delete ${party.name}`} color="error" onClick={() => setDeleting(party)}><DeleteIcon /></IconButton>
+                </Stack>
+              </Paper>
+            ))}
+            <TablePagination
+              component="div"
+              count={data?.meta.totalItems ?? 0}
+              page={(data?.meta.page ?? 1) - 1}
+              rowsPerPage={data?.meta.pageSize ?? 25}
+              rowsPerPageOptions={[25, 50, 100]}
+              onPageChange={(_, page) => pagination.setPage(page + 1)}
+              onRowsPerPageChange={(event) => pagination.setPageSize(Number(event.target.value))}
+              labelRowsPerPage="Rows"
+              sx={{ '& .MuiTablePagination-toolbar': { px: 0, flexWrap: 'wrap', justifyContent: 'flex-end' } }}
+            />
+          </Stack>
+        ) : (
+          <DataTable
+            rows={data?.items ?? []}
+            columns={columns}
+            meta={data?.meta}
+            pagination={pagination}
+            loading={isFetching}
+            searchPlaceholder="Search by name, code, phone, GSTIN or city…"
+            height={620}
+          />
+        )}
       </Stack>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth fullScreen={mobile}>
         <DialogTitle>{editing ? `Edit ${editing.name}` : `Create ${config.singular}`}</DialogTitle>
         <form onSubmit={onSubmit} noValidate autoComplete="off">
-          <DialogContent>
+          <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
             <Stack spacing={2} sx={{ mt: 0.5 }}>
               {serverError && <Alert severity="error">{serverError}</Alert>}
 
@@ -445,15 +570,17 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
                 <TextField label="Contact person" inputProps={NO_AUTOFILL} {...form.register('contactPerson')} />
                 <TextField
                   label={config.requiresPhone ? 'Phone *' : 'Phone'}
+                  type="tel"
                   inputProps={NO_AUTOFILL}
                   required={config.requiresPhone}
                   error={Boolean(form.formState.errors.phone)}
                   helperText={form.formState.errors.phone?.message}
                   {...form.register('phone')}
                 />
-                <TextField label="Alt phone" inputProps={NO_AUTOFILL} {...form.register('altPhone')} />
+                <TextField label="Alt phone" type="tel" inputProps={NO_AUTOFILL} {...form.register('altPhone')} />
                 <TextField
                   label="Email"
+                  type="email"
                   inputProps={NO_AUTOFILL}
                   error={Boolean(form.formState.errors.email)}
                   helperText={form.formState.errors.email?.message}
@@ -509,11 +636,11 @@ export function PartyEntityPage({ config }: { config: PartyEntityConfig }): JSX.
               />
             </Stack>
           </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setDialogOpen(false)} color="inherit">
+          <DialogActions sx={{ px: { xs: 2, sm: 3 }, pb: { xs: 2, sm: 1 }, gap: 1 }}>
+            <Button onClick={() => setDialogOpen(false)} color="inherit" fullWidth={mobile}>
               Cancel
             </Button>
-            <Button type="submit" variant="contained" disabled={form.formState.isSubmitting}>
+            <Button type="submit" variant="contained" disabled={form.formState.isSubmitting} fullWidth={mobile}>
               {editing ? 'Save changes' : 'Create'}
             </Button>
           </DialogActions>

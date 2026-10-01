@@ -18,8 +18,11 @@ import { fetchAllPages } from '../../lib/fetch-all-pages';
 const KEY = 'quotations';
 
 export interface QuotationFilters {
+  fromDate?: string;
+  toDate?: string;
   customerId?: string;
   branchId?: string;
+  salesmanUserId?: string;
   status?: QuotationStatus;
 }
 
@@ -91,11 +94,26 @@ export function useCustomers() {
   });
 }
 
-/** Active users holding a role flagged as a sales role. */
-export function useSalesmen() {
+/** Resolve an exact customer mobile match without loading the full customer list. */
+export function useCustomerByPhone(phone: string) {
+  const digits = phone.replace(/\D/g, '').slice(-10);
   return useQuery({
-    queryKey: ['/users/salesmen'],
-    queryFn: () => apiFetch<SalesmanItem[]>('/users/salesmen'),
+    queryKey: ['/customers', 'phone', digits],
+    queryFn: async () => {
+      const result = await apiFetch<Paginated<PartyItem>>(
+        `/customers?search=${encodeURIComponent(digits)}&page=1&pageSize=50`,
+      );
+      return result.items.find((customer) => customer.phone?.replace(/\D/g, '').slice(-10) === digits) ?? null;
+    },
+    enabled: digits.length === 10,
+  });
+}
+
+/** Active users holding a role flagged as a sales role. */
+export function useSalesmen(branchId?: string) {
+  return useQuery({
+    queryKey: ['/users/salesmen', branchId],
+    queryFn: () => apiFetch<SalesmanItem[]>(`/users/salesmen${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`),
     staleTime: 5 * 60_000,
   });
 }

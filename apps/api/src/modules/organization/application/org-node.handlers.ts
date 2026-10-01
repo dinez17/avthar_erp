@@ -147,7 +147,7 @@ abstract class BaseListHandler
   protected constructor(private readonly repo: OrgNodeRepository) {}
 
   execute(query: ListOrgNodesQueryBase): Promise<Paginated<OrgNodeItem>> {
-    return this.repo.list(query.pagination, query.parentId);
+    return this.repo.list(query.pagination, query.parentId, query.branchIds);
   }
 }
 

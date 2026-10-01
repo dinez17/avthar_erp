@@ -65,6 +65,20 @@ export class BranchPriceEntryDto {
   @Min(0)
   sellingPrice!: number;
 
+  @ApiPropertyOptional({ example: 1200, minimum: 0, description: 'GST-inclusive franchisee rate' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  franchiseeRate?: number;
+
+  @ApiPropertyOptional({ example: 1500, minimum: 0, description: 'Product-master MRP' })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  mrp?: number;
+
   @ApiProperty({ description: '0 for a new price row, otherwise the version last read' })
   @Type(() => Number)
   @IsInt()

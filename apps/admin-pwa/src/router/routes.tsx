@@ -7,6 +7,7 @@ import { OverviewPage } from '../pages/OverviewPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { UsersPage } from '../features/users/UsersPage';
 import { RolesPage } from '../features/roles/RolesPage';
+import { RoleEditorPage } from '../features/roles/RoleEditorPage';
 import { DepartmentsPage } from '../features/departments/DepartmentsPage';
 import { OrgEntityPage } from '../features/organization/OrgEntityPage';
 import { ORG_ENTITIES } from '../features/organization/config';
@@ -20,11 +21,16 @@ import { PurchaseRatesPage } from '../features/products/PurchaseRatesPage';
 import { SellingPricesPage } from '../features/products/SellingPricesPage';
 import { ProductAuditPage } from '../features/products/ProductAuditPage';
 import { ProfitReportPage } from '../features/sales/ProfitReportPage';
+import { FastMovingReportPage, ProductSalesReportPage, ProductTransactionReportPage, SalesmanSalesReportPage } from '../features/sales/SalesAnalyticsPage';
+import { IncentiveReportPage } from '../features/sales/IncentiveReportPage';
+import { IncentiveAssignPage } from '../features/sales/IncentiveAssignPage';
 import { PartyEntityPage } from '../features/parties/PartyEntityPage';
 import { PARTY_ENTITIES } from '../features/parties/config';
 import { LogisticsPage } from '../features/logistics/LogisticsPage';
 import { LOGISTICS_ENTITIES } from '../features/logistics/config';
 import { StockPage } from '../features/inventory/StockPage';
+import { StockCheckPage } from '../features/inventory/StockCheckPage';
+import { ProductStockCheckPage } from '../features/inventory/ProductStockCheckPage';
 import { StockCountPage } from '../features/inventory/StockCountPage';
 import { TransfersPage } from '../features/inventory/TransfersPage';
 import { TransferPrintPage } from '../features/inventory/TransferPrintPage';
@@ -56,6 +62,8 @@ import { CustomerLedgerPage } from '../features/sales/CustomerLedgerPage';
 import { GstSummaryPage } from '../features/sales/GstSummaryPage';
 import { OutstandingPage } from '../features/sales/OutstandingPage';
 import { SalesInvoicesPage } from '../features/sales/SalesInvoicesPage';
+import { SalesReturnsPage } from '../features/sales/SalesReturnsPage';
+import { SalesReturnPrintPage } from '../features/sales/SalesReturnPrintPage';
 import { SalesOrdersPage } from '../features/sales/SalesOrdersPage';
 import { GatePassesPage } from '../features/dispatch/GatePassesPage';
 import { GatePassEntryPage } from '../features/dispatch/GatePassEntryPage';
@@ -78,6 +86,7 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
           // Printable documents render bare: no sidebar, header or breadcrumb.
           { path: 'quotations/:id/print', element: <QuotationPrintPage /> },
           { path: 'sales-invoices/:id/print', element: <SalesInvoicePrintPage /> },
+          { path: 'sales-returns/:id/print', element: <SalesReturnPrintPage /> },
           { path: 'receipts/:id/print', element: <ReceiptPrintPage /> },
           { path: 'gate-passes/:id/print', element: <GatePassPrintPage /> },
           { path: 'stock/transfers/:id/print', element: <TransferPrintPage /> },
@@ -87,6 +96,8 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
               { index: true, element: <OverviewPage /> },
               { path: 'users', element: <UsersPage /> },
               { path: 'roles', element: <RolesPage /> },
+              { path: 'roles/new', element: <RoleEditorPage /> },
+              { path: 'roles/:id/edit', element: <RoleEditorPage /> },
               { path: 'departments', element: <DepartmentsPage /> },
               {
                 path: 'organization/companies',
@@ -129,6 +140,12 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
               { path: 'products/prices', element: <SellingPricesPage /> },
               { path: 'product-audit', element: <ProductAuditPage /> },
               { path: 'profit', element: <ProfitReportPage /> },
+              { path: 'reports/product-transactions', element: <ProductTransactionReportPage /> },
+              { path: 'reports/fast-moving', element: <FastMovingReportPage /> },
+              { path: 'reports/product-sales', element: <ProductSalesReportPage /> },
+              { path: 'reports/salesman-incentives', element: <IncentiveReportPage /> },
+              { path: 'products/incentives', element: <IncentiveAssignPage /> },
+              { path: 'reports/salesman-sales', element: <SalesmanSalesReportPage /> },
               {
                 path: 'customers',
                 element: <PartyEntityPage config={PARTY_ENTITIES['customers']!} />,
@@ -150,6 +167,8 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
                 element: <LogisticsPage config={LOGISTICS_ENTITIES['drivers']!} />,
               },
               { path: 'stock', element: <StockPage /> },
+              { path: 'stock/check', element: <StockCheckPage /> },
+              { path: 'stock/product-check', element: <ProductStockCheckPage /> },
               { path: 'stock/count', element: <StockCountPage /> },
               { path: 'stock/transfers', element: <TransfersPage /> },
               { path: 'stock/reports', element: <StockReportsPage /> },
@@ -165,6 +184,7 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
               { path: 'crm/visits', element: <SalesVisitsPage /> },
               { path: 'sales-orders', element: <SalesOrdersPage /> },
               { path: 'sales-invoices', element: <SalesInvoicesPage /> },
+              { path: 'sales-returns', element: <SalesReturnsPage /> },
               { path: 'gate-passes', element: <GatePassesPage /> },
               { path: 'gate-passes/new', element: <GatePassEntryPage /> },
               { path: 'driver-cash', element: <DriverCashPage /> },

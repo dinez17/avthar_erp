@@ -26,6 +26,14 @@ export function useRoles(query: PaginationQuery) {
   });
 }
 
+export function useRole(id: string | undefined) {
+  return useQuery({
+    queryKey: [KEY, id],
+    queryFn: () => apiFetch<RoleListItem>(`/roles/${id}`),
+    enabled: Boolean(id),
+  });
+}
+
 export function usePermissionCodes() {
   return useQuery({
     queryKey: ['permissions'],

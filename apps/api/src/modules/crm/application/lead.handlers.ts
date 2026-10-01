@@ -112,6 +112,8 @@ function normalise<T extends CreateLeadInput | UpdateLeadInput>(data: T): T {
     altPhone: trimmed(data.altPhone),
     email,
     city: trimmed(data.city),
+    state: trimmed(data.state),
+    pincode: trimmed(data.pincode),
     notes: trimmed(data.notes),
   } as T;
 }

@@ -40,10 +40,18 @@ export function hasCounted(counts: DenominationCounts): boolean {
  */
 export function isDayLocked(entryDate: Date, lastCloseDate: Date | null): boolean {
   if (!lastCloseDate) return false;
-  const day = (date: Date): number =>
-    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  return day(entryDate) <= day(lastCloseDate);
+  return indiaBusinessDay(entryDate) <= indiaBusinessDay(lastCloseDate);
 }
+
+/**
+ * Calendar day used by the ERP in India.
+ *
+ * A browser in India serialises local midnight as 18:30 UTC on the previous date. The
+ * API runs in UTC, so using the server's local getters made a 29 September cash entry
+ * look like 28 September and incorrectly placed it behind the previous day's close.
+ */
+const indiaBusinessDay = (date: Date): number =>
+  Math.floor((date.getTime() + 330 * 60 * 1000) / (24 * 60 * 60 * 1000));
 
 export interface CloseProblemInput {
   /** The day being closed. */
@@ -62,13 +70,14 @@ export interface CloseProblemInput {
  */
 export function closeProblem(input: CloseProblemInput): string | null {
   const today = input.today ?? new Date();
-  const day = (date: Date): number =>
-    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 
-  if (day(input.closeDate) > day(today)) {
+  if (indiaBusinessDay(input.closeDate) > indiaBusinessDay(today)) {
     return 'That day has not happened yet';
   }
-  if (input.lastCloseDate && day(input.closeDate) <= day(input.lastCloseDate)) {
+  if (
+    input.lastCloseDate
+    && indiaBusinessDay(input.closeDate) <= indiaBusinessDay(input.lastCloseDate)
+  ) {
     return 'That day is already closed — reopen it if the count was wrong';
   }
   if (input.countedAmount < 0) {

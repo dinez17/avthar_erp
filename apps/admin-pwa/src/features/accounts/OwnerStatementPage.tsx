@@ -21,6 +21,7 @@ import { useEffect, useState } from 'react';
 import { PageContainer } from '@tiles-erp/ui';
 import type { CashEntryItem, OwnerStatement } from '@tiles-erp/shared-types';
 import { useOwnerStatement, useOwnerSummary } from './api';
+import { AccountBranchSelect, useAccountBranch } from './AccountBranchSelect';
 
 const money = (value: number | null | undefined): string =>
   typeof value === 'number' && Number.isFinite(value)
@@ -64,13 +65,14 @@ const csvOf = (statement: OwnerStatement): string => {
  * page exists to answer, and it is the one an owner will want to see before signing.
  */
 export function OwnerStatementPage(): JSX.Element {
+  const branch = useAccountBranch();
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(localDay(new Date()));
   const [ownerId, setOwnerId] = useState('');
   const [showReversed, setShowReversed] = useState(false);
 
-  const { data: summary } = useOwnerSummary(from, to);
-  const { data: statement } = useOwnerStatement(ownerId, from, to, showReversed);
+  const { data: summary } = useOwnerSummary(from, to, branch.branchId);
+  const { data: statement } = useOwnerStatement(ownerId, from, to, showReversed, branch.branchId);
 
   useEffect(() => {
     if (!ownerId && summary?.rows.length) setOwnerId(summary.rows[0]!.accountId);
@@ -101,6 +103,7 @@ export function OwnerStatementPage(): JSX.Element {
         </Button>
       }
     >
+      <Stack sx={{ mb: 2 }}><AccountBranchSelect {...branch} /></Stack>
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField

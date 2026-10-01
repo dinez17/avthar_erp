@@ -33,6 +33,11 @@ export interface PartyItem extends PartyContact {
   /** Suppliers only. */
   paymentTermDays: number | null;
   version: number;
+  /** Customers only: the linked SixOrbit customer and last sync result. */
+  sixorbitId: string | null;
+  sixorbitAlid: string | null;
+  sixorbitSyncStatus: import('./product').ProductSyncStatus | null;
+  sixorbitSyncError: string | null;
 }
 
 export interface CreatePartyInput extends Partial<PartyContact> {

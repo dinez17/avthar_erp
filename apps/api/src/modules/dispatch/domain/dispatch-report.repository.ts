@@ -1,4 +1,5 @@
 import type {
+  DispatchedProductReport,
   DriverCashReport,
   FreightCollectionReport,
   PendingDispatchAgeReport,
@@ -23,6 +24,8 @@ export interface DispatchReportWindow {
  * so they are four calls rather than one wide one nobody uses whole.
  */
 export interface DispatchReportRepository {
+  /** Product lines posted as sales on one business date, newest posting first. */
+  dispatchedProducts(on: Date, branchId?: UUID): Promise<DispatchedProductReport>;
   /** What each customer was charged for freight and what came back. */
   freightCollection(window: DispatchReportWindow): Promise<FreightCollectionReport>;
   /** Distance, hire and freight per vehicle, over trips closed in the period. */

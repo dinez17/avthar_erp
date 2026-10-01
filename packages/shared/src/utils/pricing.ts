@@ -1,5 +1,9 @@
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
+/** Convert a GST-inclusive customer price to the taxable rate used on sales lines. */
+export const excludeGst = (inclusivePrice: number, gstRate: number): number =>
+  round2(inclusivePrice / (1 + gstRate / 100));
+
 /** Taxable base per box before GST. */
 export const calculateTaxableBase = (
   purchaseRate: number,

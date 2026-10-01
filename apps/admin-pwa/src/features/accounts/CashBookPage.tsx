@@ -1,5 +1,7 @@
 import AddIcon from '@mui/icons-material/Add';
 import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import PrintIcon from '@mui/icons-material/Print';
 import UndoIcon from '@mui/icons-material/Undo';
 import {
   Alert,
@@ -31,7 +33,9 @@ import { PageContainer } from '@tiles-erp/ui';
 import type { CashEntryItem } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
 import { CashEntryDialog } from './CashEntryDialog';
+import { downloadTableExcel, downloadTablePdf, type ExportColumn } from '../../components/ListExportButtons';
 import { useCashBook, useCashPosition, useLedgerAccounts, useReverseCashEntry } from './api';
+import { AccountBranchSelect, useAccountBranch } from './AccountBranchSelect';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -69,32 +73,17 @@ const describe = (entry: CashEntryItem): string =>
   entry.narration ??
   TYPE_LABEL[entry.type];
 
-const csvOf = (entries: CashEntryItem[]): string => {
-  const escape = (value: string): string => `"${value.replace(/"/g, '""')}"`;
-  const header = [
-    'Date',
-    'Number',
-    'Type',
-    'Details',
-    'Reference',
-    'In',
-    'Out',
-    'Balance',
-    'Status',
-  ];
-  const rows = entries.map((entry) => [
-    dayOf(entry.entryDate),
-    entry.entryNumber,
-    TYPE_LABEL[entry.type],
-    describe(entry),
-    entry.referenceNo ?? '',
-    entry.direction === 'IN' ? entry.amount.toFixed(2) : '',
-    entry.direction === 'OUT' ? entry.amount.toFixed(2) : '',
-    entry.balance.toFixed(2),
-    entry.reversedAt ? 'Reversed' : '',
-  ]);
-  return [header, ...rows].map((row) => row.map((cell) => escape(String(cell))).join(',')).join('\n');
-};
+const cashBookPdfColumns: ExportColumn<CashEntryItem>[] = [
+  { header: 'Date', value: (entry) => dayOf(entry.entryDate), width: 75 },
+  { header: 'Number', value: (entry) => entry.entryNumber, width: 110 },
+  { header: 'Type', value: (entry) => TYPE_LABEL[entry.type], width: 75 },
+  { header: 'Details', value: describe, width: 180 },
+  { header: 'Reference', value: (entry) => entry.referenceNo, width: 95 },
+  { header: 'In', value: (entry) => entry.direction === 'IN' ? entry.amount : '', width: 75 },
+  { header: 'Out', value: (entry) => entry.direction === 'OUT' ? entry.amount : '', width: 75 },
+  { header: 'Balance', value: (entry) => entry.balance, width: 85 },
+  { header: 'Status', value: (entry) => entry.reversedAt ? 'Reversed' : '', width: 70 },
+];
 
 /**
  * One account's book: what it held, what moved, what it holds now.
@@ -104,8 +93,9 @@ const csvOf = (entries: CashEntryItem[]): string => {
  * with a contra row, and both stay on the page.
  */
 export function CashBookPage(): JSX.Element {
+  const branch = useAccountBranch();
   const [accountId, setAccountId] = useState('');
-  const [from, setFrom] = useState(localDay(-30));
+  const [from, setFrom] = useState(localDay());
   const [to, setTo] = useState(localDay());
   const [showReversed, setShowReversed] = useState(false);
   const [entering, setEntering] = useState(false);
@@ -114,16 +104,17 @@ export function CashBookPage(): JSX.Element {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: accounts = [] } = useLedgerAccounts();
+  const { data: accounts = [] } = useLedgerAccounts({ branchId: branch.branchId });
   const { data: book, isLoading } = useCashBook(
     { accountId, from, to, includeReversed: showReversed },
     Boolean(accountId),
   );
-  const { data: position } = useCashPosition(to);
+  const { data: position } = useCashPosition(to, branch.branchId, Boolean(branch.branchId));
   const reverse = useReverseCashEntry();
 
   useEffect(() => {
-    if (!accountId && accounts.length > 0) setAccountId(accounts[0]!.id);
+    if (accounts.length > 0 && !accounts.some((account) => account.id === accountId)) setAccountId(accounts[0]!.id);
+    if (accounts.length === 0) setAccountId('');
   }, [accounts, accountId]);
 
   /** Day totals, so a page that spans a month still reads day by day. */
@@ -142,13 +133,26 @@ export function CashBookPage(): JSX.Element {
 
   const download = (): void => {
     if (!book) return;
-    const blob = new Blob([csvOf(book.entries)], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `cash-book-${book.accountName.replace(/\s+/g, '-')}-${from}-to-${to}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const safeAccount = book.accountName.replace(/\s+/g, '-');
+    downloadTableExcel(
+      `cash-book-${safeAccount}-${from}-to-${to}.xls`,
+      `Cash Book - ${book.accountName} - ${from} to ${to}`,
+      cashBookPdfColumns,
+      book.entries,
+      [['TOTAL', '', '', '', '', book.received, book.paid, book.closingBalance, '']],
+    );
+  };
+
+  const downloadPdf = (): void => {
+    if (!book) return;
+    const safeAccount = book.accountName.replace(/\s+/g, '-');
+    downloadTablePdf(
+      `cash-book-${safeAccount}-${from}-to-${to}.pdf`,
+      `Cash Book - ${book.accountName} - ${from} to ${to}`,
+      cashBookPdfColumns,
+      book.entries,
+      [['TOTAL', '', '', '', '', book.received, book.paid, book.closingBalance, '']],
+    );
   };
 
   const confirmReverse = async (): Promise<void> => {
@@ -175,7 +179,14 @@ export function CashBookPage(): JSX.Element {
             disabled={!book?.entries.length}
             onClick={download}
           >
-            CSV
+            Excel
+          </Button>
+          <Button
+            startIcon={<PictureAsPdfIcon />}
+            disabled={!book?.entries.length}
+            onClick={downloadPdf}
+          >
+            PDF
           </Button>
           <Button
             startIcon={<AddIcon />}
@@ -188,6 +199,7 @@ export function CashBookPage(): JSX.Element {
         </Stack>
       }
     >
+      <Stack sx={{ mb: 2 }}><AccountBranchSelect {...branch} /></Stack>
       {note && (
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNote(null)}>
           {note}
@@ -407,13 +419,69 @@ export function CashBookPage(): JSX.Element {
         </Table>
       </Paper>
 
-      {position && position.rows.length > 1 && (
-        <Paper variant="outlined" sx={{ mt: 3, p: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Where the money is on {new Date(position.on).toLocaleDateString('en-IN')}
-          </Typography>
+      {position && position.rows.length > 0 && (
+        <Paper
+          className="cash-position-print-area"
+          variant="outlined"
+          sx={{ mt: 3, p: 2 }}
+        >
+          <style>{`
+            .cash-position-print-heading { display: none; }
+            @media print {
+              @page { size: A4 portrait; margin: 14mm; }
+              body * { visibility: hidden !important; }
+              .cash-position-print-area,
+              .cash-position-print-area * { visibility: visible !important; }
+              .cash-position-print-area {
+                position: absolute !important;
+                inset: 0 auto auto 0 !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                border: 0 !important;
+                box-shadow: none !important;
+              }
+              .cash-position-print-hidden { display: none !important; }
+              .cash-position-print-heading { display: block !important; }
+              .cash-position-print-area table { width: 100% !important; }
+              .cash-position-print-area tr { break-inside: avoid; }
+            }
+          `}</style>
+          <Box className="cash-position-print-heading" sx={{ mb: 2, textAlign: 'center' }}>
+            <Typography variant="h6" fontWeight={700}>
+              AVTHAR ERP
+            </Typography>
+            <Typography variant="subtitle1" fontWeight={700}>
+              WHERE THE MONEY IS
+            </Typography>
+            <Typography variant="body2">
+              As on {new Date(position.on).toLocaleDateString('en-IN')}
+            </Typography>
+          </Box>
+          <Stack
+            className="cash-position-print-hidden"
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            spacing={2}
+          >
+            <Typography variant="subtitle2">
+              Where the money is on {new Date(position.on).toLocaleDateString('en-IN')}
+            </Typography>
+            <Button size="small" startIcon={<PrintIcon />} onClick={() => window.print()}>
+              Print
+            </Button>
+          </Stack>
           <Divider sx={{ mb: 1 }} />
           <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Account</TableCell>
+                <TableCell>Branch</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell align="right">Closing balance</TableCell>
+              </TableRow>
+            </TableHead>
             <TableBody>
               {position.rows.map((row) => (
                 <TableRow key={row.accountId} hover>
@@ -423,13 +491,16 @@ export function CashBookPage(): JSX.Element {
                       {row.branchName ?? 'Company'}
                     </Typography>
                   </TableCell>
+                  <TableCell>
+                    {row.accountType === 'OWNER' ? 'With owner' : row.accountType}
+                  </TableCell>
                   <TableCell align="right">
                     <Typography variant="body2">{money(row.closingBalance)}</Typography>
                   </TableCell>
                 </TableRow>
               ))}
               <TableRow>
-                <TableCell colSpan={2} align="right">
+                <TableCell colSpan={3} align="right">
                   <Typography variant="body2" fontWeight={600}>
                     Cash {money(position.totalCash)} · Bank {money(position.totalBank)}
                     {position.totalWithOwners > 0 &&

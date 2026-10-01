@@ -16,6 +16,16 @@ describe('parseSixOrbitBody', () => {
     expect(outcome.resultCode).toBe(SIXORBIT_RESULT_CODES.WRITE_OK);
   });
 
+  it('reads a valid envelope printed after PHP notices', () => {
+    const outcome = parseSixOrbitBody<{ cuid: string }>(
+      '<br />\n<b>Notice</b>: Undefined index: display_name in service.php on line 42\n' +
+        '{"success":true,"data":{"cuid":"410932274"},"result_code":"20006","message":"Customer Updated Successfully"}',
+    );
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error('expected success');
+    expect(outcome.data.cuid).toBe('410932274');
+  });
+
   it('treats success:false as a failure even though the transport said HTTP 200', () => {
     // The single easiest way to get this integration wrong: their errors are 200s, so
     // anything keyed off the HTTP status reads every failure as a success.

@@ -17,6 +17,8 @@ import { apiFetch } from '../../lib/api-client';
 const KEY = 'sales-orders';
 
 export interface SalesOrderFilters {
+  fromDate?: string;
+  toDate?: string;
   customerId?: string;
   branchId?: string;
   status?: SalesOrderStatus;

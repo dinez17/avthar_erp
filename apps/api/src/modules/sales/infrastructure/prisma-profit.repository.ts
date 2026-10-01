@@ -26,6 +26,8 @@ interface Bucket {
   revenue: number;
   cost: number;
   qtyBoxes: number;
+  boxes: number;
+  pieces: number;
   revenueWithoutCost: number;
   revenueEstimatedCost: number;
 }
@@ -65,6 +67,8 @@ export class PrismaProfitRepository implements ProfitRepository {
       },
       select: {
         productId: true,
+        boxes: true,
+        pieces: true,
         qtyBoxes: true,
         lineSubTotal: true,
         unitCost: true,
@@ -105,6 +109,8 @@ export class PrismaProfitRepository implements ProfitRepository {
         revenue: 0,
         cost: 0,
         qtyBoxes: 0,
+        boxes: 0,
+        pieces: 0,
         revenueWithoutCost: 0,
         revenueEstimatedCost: 0,
       };
@@ -112,6 +118,8 @@ export class PrismaProfitRepository implements ProfitRepository {
       bucket.revenue = round2(bucket.revenue + revenue);
       bucket.cost = round2(bucket.cost + cost);
       bucket.qtyBoxes = round3(bucket.qtyBoxes + qtyBoxes);
+      bucket.boxes += line.boxes;
+      bucket.pieces += line.pieces;
       if (!hasCost) bucket.revenueWithoutCost = round2(bucket.revenueWithoutCost + revenue);
       if (hasCost && line.costEstimated) {
         bucket.revenueEstimatedCost = round2(bucket.revenueEstimatedCost + revenue);

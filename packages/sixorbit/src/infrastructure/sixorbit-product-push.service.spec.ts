@@ -17,6 +17,7 @@ interface ProductRow {
   barcode: string | null;
   isActive: boolean;
   sixorbitId: string | null;
+  sixorbitNumber: string | null;
   sixorbitRaw: Record<string, unknown> | null;
   brand: { sixorbitId: string | null } | null;
   category: { sixorbitId: string | null } | null;
@@ -38,6 +39,7 @@ const product = (over: Partial<ProductRow> = {}): ProductRow => ({
   barcode: null,
   isActive: true,
   sixorbitId: null,
+  sixorbitNumber: '17361',
   sixorbitRaw: null,
   brand: { sixorbitId: '410012486' },
   category: { sixorbitId: '410053695' },
@@ -70,8 +72,11 @@ interface Call {
 
 /** Records what was sent, and answers each task from a script. */
 function stubClient(script: {
-  search?: { variations: { isvid: string; variation_number: string }[] } | { fail: string };
-  write?: { isvid?: string } | { throw: Error };
+  search?:
+    | { variations: { isvid: string; variation_number: string; sku?: string }[] }
+    | { fail: string; resultCode?: string };
+  write?: { isvid?: string | number; obj?: { variation_number: string }[] } | { throw: Error };
+  detail?: { variations: { isvid: string; variation_number: string }[] } | { throw: Error };
 }): { client: SixOrbitClient; calls: Call[] } {
   const calls: Call[] = [];
   const client = {
@@ -79,7 +84,12 @@ function stubClient(script: {
       calls.push({ task: opts.spec.task, params: opts.params });
       const s = script.search;
       if (s && 'fail' in s) {
-        return Promise.resolve({ ok: false, kind: 'TRANSPORT', resultCode: null, message: s.fail });
+        return Promise.resolve({
+          ok: false,
+          kind: 'TRANSPORT',
+          resultCode: s.resultCode ?? null,
+          message: s.fail,
+        });
       }
       return Promise.resolve({
         ok: true,
@@ -88,8 +98,15 @@ function stubClient(script: {
         message: null,
       });
     },
-    callOrThrow: (opts: { spec: { task: string }; data?: unknown }) => {
-      calls.push({ task: opts.spec.task, data: opts.data });
+    callOrThrow: (opts: { spec: { task: string }; data?: unknown; params?: Record<string, unknown> }) => {
+      calls.push({ task: opts.spec.task, data: opts.data, params: opts.params });
+      if (opts.spec.task === 'variation/fetch') {
+        const detail = script.detail;
+        if (detail && 'throw' in detail) return Promise.reject(detail.throw);
+        return Promise.resolve(
+          detail ?? { variations: [{ isvid: String(opts.params?.isvid), variation_number: '17493' }] },
+        );
+      }
       const w = script.write;
       if (w && 'throw' in w) return Promise.reject(w.throw);
       return Promise.resolve(w ?? {});
@@ -100,8 +117,7 @@ function stubClient(script: {
 
 describe('SixOrbitProductPushService — the duplicate guard', () => {
   it('searches for the sku before creating anything', async () => {
-    // No task in their API takes an external reference, so this lookup is the only thing
-    // standing between a timed-out create and a duplicate product.
+    // This still adopts an older unlinked variation whose number matches our local SKU.
     const { prisma } = stubPrisma(product());
     const { client, calls } = stubClient({ write: { isvid: '999' } });
 
@@ -109,6 +125,19 @@ describe('SixOrbitProductPushService — the duplicate guard', () => {
 
     expect(calls[0]?.task).toBe('variation/fetch');
     expect(calls[0]?.params?.searchtext).toBe('17361');
+    expect(calls[1]?.task).toBe('variation/create_variation_submit');
+  });
+
+  it('creates when variation/fetch returns its normal no-match result', async () => {
+    const { prisma } = stubPrisma(product({ sku: 'TEST1' }));
+    const { client, calls } = stubClient({
+      search: { fail: 'No Variation found.', resultCode: '20004' },
+      write: { isvid: 161089, obj: [{ variation_number: '17494' }] },
+    });
+
+    const outcome = await new SixOrbitProductPushService(prisma, client).push('p1');
+
+    expect(outcome.operation).toBe('create');
     expect(calls[1]?.task).toBe('variation/create_variation_submit');
   });
 
@@ -124,6 +153,20 @@ describe('SixOrbitProductPushService — the duplicate guard', () => {
     expect(outcome.operation).toBe('edit');
     expect(calls[1]?.task).toBe('variation/edit_variation_submit');
     expect(updates[0]?.sixorbitId).toBe('160595');
+  });
+
+  it('adopts an exact remote SKU and replaces the ERP placeholder with variation_number', async () => {
+    const { prisma, updates } = stubPrisma(product({ sku: 'TEST' }));
+    const { client, calls } = stubClient({
+      search: { variations: [{ isvid: '161088', variation_number: '17493', sku: 'TEST' }] },
+    });
+
+    const outcome = await new SixOrbitProductPushService(prisma, client).push('p1');
+
+    expect(outcome.adopted).toBe(true);
+    expect(updates[0]?.sixorbitId).toBe('161088');
+    expect(updates[0]?.sku).toBe('17493');
+    expect((calls[1]?.data as Record<string, unknown>).sku_code).toBe('17493');
   });
 
   it('saves their isvid as soon as the search finds it, before the edit is attempted', async () => {
@@ -198,14 +241,59 @@ describe('SixOrbitProductPushService — blocked products', () => {
 });
 
 describe('SixOrbitProductPushService — results', () => {
-  it('stores the new id so the next push edits rather than duplicates', async () => {
+  it('uses the returned variation_number as ERP SKU and saves isvid first', async () => {
     const { prisma, updates } = stubPrisma(product());
-    const { client } = stubClient({ write: { isvid: '160777' } });
+    const { client, calls } = stubClient({
+      write: { isvid: 161088, obj: [{ variation_number: '17493' }] },
+    });
+
+    await new SixOrbitProductPushService(prisma, client).push('p1');
+
+    expect((calls[1]?.data as Record<string, unknown>).sku_code).toBe('');
+    expect(updates[0]?.sixorbitId).toBe('161088');
+    expect(updates[1]?.sku).toBe('17493');
+    expect(updates[1]?.sixorbitNumber).toBe('17493');
+    expect(updates[1]?.sixorbitSyncStatus).toBe('SYNCED');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('fetches the generated number by isvid when the add response omits it', async () => {
+    const { prisma, updates } = stubPrisma(product());
+    const { client, calls } = stubClient({ write: { isvid: '160777' } });
 
     await new SixOrbitProductPushService(prisma, client).push('p1');
 
     expect(updates[0]?.sixorbitId).toBe('160777');
-    expect(updates[0]?.sixorbitSyncStatus).toBe('SYNCED');
+    expect(calls[2]?.params?.isvid).toBe('160777');
+    expect(updates[1]?.sku).toBe('17493');
+    expect(updates[1]?.sixorbitSyncStatus).toBe('SYNCED');
+  });
+
+  it('keeps the returned isvid if the generated number cannot be fetched', async () => {
+    const { prisma, updates } = stubPrisma(product());
+    const { client } = stubClient({
+      write: { isvid: '160777' },
+      detail: { throw: new Error('detail fetch failed') },
+    });
+
+    await expect(new SixOrbitProductPushService(prisma, client).push('p1')).rejects.toThrow(
+      'detail fetch failed',
+    );
+    expect(updates[0]?.sixorbitId).toBe('160777');
+    expect(updates[1]?.sixorbitSyncStatus).toBe('FAILED');
+  });
+
+  it('recovers a linked create number before an edit sends its SKU', async () => {
+    const { prisma, updates } = stubPrisma(
+      product({ sixorbitId: '160777', sixorbitNumber: null }),
+    );
+    const { client, calls } = stubClient({});
+
+    await new SixOrbitProductPushService(prisma, client).push('p1');
+
+    expect(calls[0]?.params?.isvid).toBe('160777');
+    expect(updates[0]?.sku).toBe('17493');
+    expect((calls[1]?.data as Record<string, unknown>).sku_code).toBe('17493');
   });
 
   it('fails loudly when they accept a create but return no id', async () => {

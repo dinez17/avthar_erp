@@ -142,8 +142,11 @@ export function useClearSixOrbitImport() {
 export function usePushProductToSixOrbit() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (productId: string) =>
-      apiFetch<SixOrbitPushResult>(`/sixorbit/products/${productId}/push`, { method: 'POST' }),
+    mutationFn: ({ productId, branchId }: { productId: string; branchId: string }) =>
+      apiFetch<SixOrbitPushResult>(`/sixorbit/products/${productId}/push`, {
+        method: 'POST',
+        body: JSON.stringify({ branchId }),
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/products'] }),
   });
 }

@@ -2,14 +2,17 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import SaveIcon from '@mui/icons-material/Save';
 import {
   Alert,
+  Box,
   Button,
   Chip,
   Divider,
   FormControlLabel,
   MenuItem,
+  Paper,
   Stack,
   Switch,
   TextField,
+  Typography,
 } from '@mui/material';
 import type { CellValueChangedEvent, ColDef } from 'ag-grid-community';
 import { useMemo, useState } from 'react';
@@ -22,6 +25,7 @@ import { ApiError } from '../../lib/api-client';
 import { useCatalogOptions } from '../catalog/api';
 import { useBranches } from '../products/branch-prices-api';
 import { useBulkSetStock, useCountSheet, useGodowns, useStockBalances } from './api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 interface CountEdit {
   boxes: number;
@@ -52,7 +56,7 @@ const num = (value: unknown, fallback = 0): number => {
 export function StockCountPage(): JSX.Element {
   const pagination = usePagination({ initialPageSize: 100 });
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const godowns = useGodowns(branchId || undefined);
   const [godownId, setGodownId] = useState('');
   const brands = useCatalogOptions('/brands');
@@ -125,6 +129,17 @@ export function StockCountPage(): JSX.Element {
     setEdits((prev) => ({
       ...prev,
       [rowKey(row)]: { boxes: num(row.countBoxes), pieces: num(row.countPieces) },
+    }));
+  };
+
+  const updateCount = (row: CountRow, change: Partial<CountEdit>): void => {
+    setSummary(null);
+    setEdits((prev) => ({
+      ...prev,
+      [rowKey(row)]: {
+        boxes: change.boxes ?? row.countBoxes,
+        pieces: change.pieces ?? row.countPieces,
+      },
     }));
   };
 
@@ -374,6 +389,86 @@ export function StockCountPage(): JSX.Element {
             loading={isFetching}
             searchPlaceholder="Search by product or SKU…"
             height={600}
+            mobileRowRenderer={(row) => (
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                <Stack spacing={1.25}>
+                  <Box>
+                    <Typography variant="subtitle1" fontWeight={700}>
+                      {row.productName}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {row.sku}
+                      {row.batchNo ? ` · Batch ${row.batchNo}` : ''}
+                      {row.shade ? ` · ${row.shade}` : ''}
+                    </Typography>
+                  </Box>
+
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                      gap: 1,
+                    }}
+                  >
+                    <Box sx={{ p: 1, bgcolor: 'action.hover', borderRadius: 1.5 }}>
+                      <Typography variant="caption" color="text.secondary">Current stock</Typography>
+                      <Typography variant="body2" fontWeight={700}>
+                        {formatStockQuantity(
+                          row.qtyBoxes,
+                          row.piecesPerBox,
+                          row.qtyBoxes > 0 ? row.qtySqft / row.qtyBoxes : 0,
+                          row.baseUom,
+                        )}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ p: 1, bgcolor: 'action.hover', borderRadius: 1.5 }}>
+                      <Typography variant="caption" color="text.secondary">Difference</Typography>
+                      <Typography
+                        variant="body2"
+                        fontWeight={700}
+                        color={row.diffBoxes === 0 ? 'text.primary' : row.diffBoxes > 0 ? 'success.main' : 'error.main'}
+                      >
+                        {row.diffBoxes === 0
+                          ? 'No change'
+                          : `${row.diffBoxes > 0 ? '+' : '−'}${formatStockQuantity(
+                              Math.abs(row.diffBoxes),
+                              row.piecesPerBox,
+                              row.qtyBoxes > 0 ? row.qtySqft / row.qtyBoxes : 0,
+                              row.baseUom,
+                            )}`}
+                      </Typography>
+                    </Box>
+                  </Box>
+
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: row.baseUom === 'PIECE' ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                      gap: 1,
+                    }}
+                  >
+                    {row.baseUom !== 'PIECE' && (
+                      <TextField
+                        label="Counted boxes"
+                        type="number"
+                        value={row.countBoxes}
+                        onChange={(event) => updateCount(row, { boxes: num(event.target.value) })}
+                        inputProps={{ min: 0, inputMode: 'decimal' }}
+                        sx={{ '& .MuiInputBase-root': { minHeight: 50, fontSize: 16 } }}
+                      />
+                    )}
+                    <TextField
+                      label="Counted pieces"
+                      type="number"
+                      value={row.countPieces}
+                      onChange={(event) => updateCount(row, { pieces: num(event.target.value) })}
+                      inputProps={{ min: 0, inputMode: 'numeric' }}
+                      sx={{ '& .MuiInputBase-root': { minHeight: 50, fontSize: 16 } }}
+                    />
+                  </Box>
+                </Stack>
+              </Paper>
+            )}
             gridOptions={{
               getRowId: (p) => `${p.data.productId}|${p.data.batchNo ?? ''}|${p.data.shade ?? ''}`,
               onCellValueChanged,

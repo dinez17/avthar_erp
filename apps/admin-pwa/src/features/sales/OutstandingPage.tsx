@@ -1,13 +1,14 @@
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import { Chip, IconButton, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageContainer } from '@tiles-erp/ui';
 import type { OutstandingRow } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
 import { useBranches } from '../products/branch-prices-api';
 import { useOutstanding } from './receipts-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -21,7 +22,7 @@ const rupees = (value: number): string => `₹${money(value)}`;
 export function OutstandingPage(): JSX.Element {
   const navigate = useNavigate();
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const outstanding = useOutstanding(branchId || undefined);
 
   const totals = useMemo(() => {

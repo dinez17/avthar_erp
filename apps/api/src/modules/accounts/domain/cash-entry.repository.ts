@@ -53,7 +53,7 @@ export interface CashEntryRepository {
   reverse(id: UUID, reason: string, actorId: UUID): Promise<CashEntryItem>;
 
   /** Every owner on one line: who is holding how much. */
-  owners(from: ISODateString, to: ISODateString): Promise<OwnerSummary>;
+  owners(from: ISODateString, to: ISODateString, branchId?: UUID): Promise<OwnerSummary>;
 
   /** One owner's holding: where it came from, where it went, what is left. */
   ownerStatement(
@@ -61,5 +61,6 @@ export interface CashEntryRepository {
     from: ISODateString,
     to: ISODateString,
     includeReversed?: boolean,
+    branchId?: UUID,
   ): Promise<OwnerStatement>;
 }

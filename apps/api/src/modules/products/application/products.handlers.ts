@@ -117,8 +117,9 @@ export class CreateProductHandler implements ICommandHandler<CreateProductComman
   async execute(command: CreateProductCommand): Promise<ProductItem> {
     const { data } = command;
     assertUomSanity(data.piecesPerBox, data.sqftPerBox);
+    const sku = data.sku?.trim().toUpperCase() || await this.products.nextSku();
     const created = await this.products.create({
-      sku: data.sku.trim().toUpperCase(),
+      sku,
       name: data.name.trim(),
       description: data.description?.trim() || null,
       categoryId: data.categoryId,
@@ -128,6 +129,7 @@ export class CreateProductHandler implements ICommandHandler<CreateProductComman
       sizeMm: data.sizeMm?.trim() || null,
       piecesPerBox: data.piecesPerBox,
       sqftPerBox: data.sqftPerBox,
+      weightKg: data.weightKg ?? null,
       baseUom: data.baseUom ?? 'BOX',
       hsnCode: data.hsnCode.trim(),
       gstRate: data.gstRate,

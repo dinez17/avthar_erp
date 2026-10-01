@@ -14,6 +14,8 @@ export interface ProfitFilters {
   from: string;
   to: string;
   branchId?: string;
+  productId?: string;
+  salesmanUserId?: string;
 }
 
 export function useProfitReport(filters: ProfitFilters) {
@@ -23,6 +25,8 @@ export function useProfitReport(filters: ProfitFilters) {
     to: filters.to,
   });
   if (filters.branchId) params.set('branchId', filters.branchId);
+  if (filters.productId) params.set('productId', filters.productId);
+  if (filters.salesmanUserId) params.set('salesmanUserId', filters.salesmanUserId);
   return useQuery({
     queryKey: [PROFIT, filters],
     queryFn: () => apiFetch<ProfitReport>(`/profit?${params.toString()}`),

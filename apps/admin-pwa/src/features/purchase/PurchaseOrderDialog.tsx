@@ -2,6 +2,8 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import {
   Alert,
+  Autocomplete,
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -25,13 +27,14 @@ import { useCreatePurchaseOrder, useSuppliers, useUpdatePurchaseOrder } from './
 
 interface DraftLine {
   productId: string;
+  productLabel: string;
   qtyBoxes: string;
   rate: string;
   discountPct: string;
   gstRate: string;
 }
 
-const blankLine: DraftLine = { productId: '', qtyBoxes: '', rate: '', discountPct: '0', gstRate: '' };
+const blankLine: DraftLine = { productId: '', productLabel: '', qtyBoxes: '', rate: '', discountPct: '0', gstRate: '' };
 
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -53,7 +56,11 @@ export function PurchaseOrderDialog({
 }: PurchaseOrderDialogProps): JSX.Element {
   const suppliers = useSuppliers();
   const branches = useBranches();
-  const products = useProducts({ page: 1, pageSize: 200, sortOrder: 'asc' }, {});
+  const [productSearch, setProductSearch] = useState('');
+  const products = useProducts(
+    { page: 1, pageSize: 50, sortOrder: 'asc', search: productSearch || undefined },
+    {},
+  );
   const createOrder = useCreatePurchaseOrder();
   const updateOrder = useUpdatePurchaseOrder();
 
@@ -74,6 +81,7 @@ export function PurchaseOrderDialog({
       setLines(
         (editing.lines ?? []).map((line) => ({
           productId: line.productId,
+          productLabel: `${line.sku} · ${line.productName}`,
           qtyBoxes: String(line.qtyBoxes),
           rate: String(line.rate),
           discountPct: String(line.discountPct),
@@ -174,21 +182,18 @@ export function PurchaseOrderDialog({
           {error && <Alert severity="error">{error}</Alert>}
 
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            <TextField
-              select
-              label="Supplier *"
+            <Autocomplete
               size="small"
-              fullWidth={false}
-              value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
-              sx={{ width: 240 }}
-            >
-              {(suppliers.data ?? []).map((s) => (
-                <MenuItem key={s.id} value={s.id}>
-                  {s.name}
-                </MenuItem>
-              ))}
-            </TextField>
+              options={suppliers.data ?? []}
+              getOptionLabel={(supplier) => `${supplier.name}${supplier.phone ? ` · ${supplier.phone}` : ''}`}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              value={(suppliers.data ?? []).find((supplier) => supplier.id === supplierId) ?? null}
+              onChange={(_, supplier) => setSupplierId(supplier?.id ?? '')}
+              sx={{ width: { xs: '100%', sm: 300 } }}
+              renderInput={(params) => (
+                <TextField {...params} label="Supplier *" placeholder="Search supplier name or phone" />
+              )}
+            />
             <TextField
               select
               label="Branch *"
@@ -222,66 +227,89 @@ export function PurchaseOrderDialog({
           {lines.map((line, index) => {
             const amounts = computed[index];
             return (
-              <Stack key={index} direction="row" spacing={1} alignItems="center">
-                <TextField
-                  select
-                  label="Product"
+              <Box
+                key={index}
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: {
+                    xs: 'repeat(2, minmax(0, 1fr))',
+                    md: 'minmax(280px, 2.4fr) repeat(4, minmax(85px, 0.8fr)) 130px 40px',
+                  },
+                  gap: 1,
+                  alignItems: 'center',
+                  p: { xs: 1.25, md: 0 },
+                  border: { xs: 1, md: 0 },
+                  borderColor: 'divider',
+                  borderRadius: { xs: 2, md: 0 },
+                }}
+              >
+                <Autocomplete
                   size="small"
-                  fullWidth={false}
-                  value={line.productId}
-                  onChange={(e) => {
-                    const product = productById.get(e.target.value);
+                  options={products.data?.items ?? []}
+                  filterOptions={(options) => options}
+                  loading={products.isFetching}
+                  getOptionLabel={(product) => `${product.sku} · ${product.name}`}
+                  isOptionEqualToValue={(option, value) => option.id === value.id}
+                  value={productById.get(line.productId) ?? null}
+                  inputValue={line.productLabel}
+                  onInputChange={(_, value, reason) => {
+                    if (reason === 'input') {
+                      setLine(index, { productLabel: value });
+                      setProductSearch(value);
+                    }
+                  }}
+                  onChange={(_, product) => {
                     setLine(index, {
-                      productId: e.target.value,
+                      productId: product?.id ?? '',
+                      productLabel: product ? `${product.sku} · ${product.name}` : '',
                       gstRate: product ? String(product.gstRate) : '',
                       rate: line.rate || (product?.purchaseRate ? String(product.purchaseRate) : ''),
                     });
+                    if (product && index === lines.length - 1) {
+                      setLines((previous) => [...previous, { ...blankLine }]);
+                    }
                   }}
-                  sx={{ width: 300 }}
-                >
-                  {(products.data?.items ?? []).map((product) => (
-                    <MenuItem key={product.id} value={product.id}>
-                      {product.sku} — {product.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
+                  sx={{ gridColumn: { xs: '1 / -1', md: 'auto' } }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Product" placeholder="Search SKU or product name" />
+                  )}
+                />
                 <TextField
                   label="Boxes"
                   type="number"
                   size="small"
-                  fullWidth={false}
+                  fullWidth
                   value={line.qtyBoxes}
                   onChange={(e) => setLine(index, { qtyBoxes: e.target.value })}
-                  sx={{ width: 100 }}
                 />
                 <TextField
                   label="Rate ₹"
                   type="number"
                   size="small"
-                  fullWidth={false}
+                  fullWidth
                   value={line.rate}
                   onChange={(e) => setLine(index, { rate: e.target.value })}
-                  sx={{ width: 110 }}
                 />
                 <TextField
                   label="Disc %"
                   type="number"
                   size="small"
-                  fullWidth={false}
+                  fullWidth
                   value={line.discountPct}
                   onChange={(e) => setLine(index, { discountPct: e.target.value })}
-                  sx={{ width: 90 }}
                 />
                 <TextField
                   label="GST %"
                   type="number"
                   size="small"
-                  fullWidth={false}
+                  fullWidth
                   value={line.gstRate}
                   onChange={(e) => setLine(index, { gstRate: e.target.value })}
-                  sx={{ width: 90 }}
                 />
-                <Typography variant="body2" sx={{ width: 130, textAlign: 'right', fontWeight: 600 }}>
+                <Typography variant="body2" sx={{ textAlign: 'right', fontWeight: 700 }}>
+                  <Typography component="span" variant="caption" color="text.secondary" sx={{ display: { xs: 'inline', md: 'none' }, mr: 0.5 }}>
+                    Total
+                  </Typography>
                   {money(amounts?.lineTotal ?? 0)}
                 </Typography>
                 <IconButton
@@ -291,13 +319,13 @@ export function PurchaseOrderDialog({
                 >
                   <DeleteIcon fontSize="small" />
                 </IconButton>
-              </Stack>
+              </Box>
             );
           })}
 
           <Button
             startIcon={<AddIcon />}
-            onClick={() => setLines((prev) => [...prev, blankLine])}
+            onClick={() => setLines((prev) => [...prev, { ...blankLine }])}
             sx={{ alignSelf: 'flex-start' }}
           >
             Add line

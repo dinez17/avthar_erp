@@ -100,7 +100,7 @@ async function tryRefresh(): Promise<boolean> {
 
 async function rawFetch<T>(path: string, init: RequestInit): Promise<ApiResponse<T>> {
   const headers = new Headers(init.headers);
-  headers.set('Content-Type', 'application/json');
+  if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const token = tokenStorage.getAccess();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   return requestJson<T>(`${env.apiUrl}${path}`, { ...init, headers });

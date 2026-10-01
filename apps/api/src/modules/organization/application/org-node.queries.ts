@@ -4,6 +4,7 @@ export class ListOrgNodesQueryBase {
   constructor(
     public readonly pagination: PaginationQuery,
     public readonly parentId?: UUID,
+    public readonly branchIds?: UUID[],
   ) {}
 }
 

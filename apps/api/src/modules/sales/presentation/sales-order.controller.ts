@@ -84,12 +84,15 @@ export class SalesOrderController {
   @RequirePermissions(PERMISSIONS.SALES_ORDER_READ)
   @RequireBranchScope({ in: 'query' })
   @ApiOperation({ summary: 'List sales orders, newest first' })
-  list(@Query() query: SalesOrderListQueryDto): Promise<Paginated<SalesOrderItem>> {
+  list(@Query() query: SalesOrderListQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<Paginated<SalesOrderItem>> {
     return this.queryBus.execute(
       new ListSalesOrdersQuery(query, {
         customerId: query.customerId,
         branchId: query.branchId,
+        branchIds: user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') ? undefined : user.branchIds,
         status: query.status,
+        fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
+        toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
       }),
     );
   }

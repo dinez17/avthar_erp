@@ -3,6 +3,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import PrintIcon from '@mui/icons-material/Print';
 import PublishIcon from '@mui/icons-material/Publish';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import {
   Alert,
   Chip,
@@ -25,15 +26,20 @@ import {
   Button,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { formatBoxPieces } from '@tiles-erp/shared';
+import { formatBoxPieces, toDateInput } from '@tiles-erp/shared';
 import { usePagination } from '@tiles-erp/hooks';
 import { ConfirmDialog, PageContainer } from '@tiles-erp/ui';
 import type { SalesInvoiceItem, SalesInvoiceStatus } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
+import { fetchAllListRows, ListExportButtons, type ExportColumn } from '../../components/ListExportButtons';
 import { ApiError } from '../../lib/api-client';
 import { useBranches } from '../products/branch-prices-api';
+import { useAuth } from '../../auth/AuthProvider';
+import { PERMISSIONS } from '@tiles-erp/config';
+import { SyncStatusChip } from '../sixorbit/SyncStatusChip';
 import { useCustomers } from './api';
 import {
   useCancelSalesInvoice,
@@ -41,7 +47,9 @@ import {
   usePostSalesInvoice,
   useSalesInvoice,
   useSalesInvoices,
+  usePushSalesInvoiceToSixOrbit,
 } from './invoices-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<SalesInvoiceStatus, 'default' | 'success' | 'error'> = {
   DRAFT: 'default',
@@ -51,15 +59,35 @@ const STATUS_COLORS: Record<SalesInvoiceStatus, 'default' | 'success' | 'error'>
 
 const STATUSES: SalesInvoiceStatus[] = ['DRAFT', 'POSTED', 'CANCELLED'];
 
-/** Paper the counter prints on; picked from the printer icon and passed to the print view. */
-const PAPER_SIZES = [
-  { value: 'A4', label: 'A4' },
-  { value: '80mm', label: '80 mm roll' },
-  { value: '58mm', label: '58 mm roll' },
+/** Invoice documents available from the row print action. */
+const PRINT_OPTIONS = [
+  { document: 'tax', paper: 'A4', label: 'Tax invoice — A4' },
+  { document: 'tax', paper: 'A5', label: 'Tax invoice — A5' },
+  { document: 'items', paper: 'A4', label: 'Item list — A4' },
+  { document: 'items', paper: 'A5', label: 'Item list — A5' },
+  { document: 'proforma', paper: 'A4', label: 'Proforma invoice — A4' },
+  { document: 'delivery', paper: 'A4', label: 'Godown-wise delivery slip — A4' },
+  { document: 'delivery', paper: '80mm', label: 'Godown-wise delivery slip — 80 mm thermal' },
+  { document: 'delivery', paper: '58mm', label: 'Godown-wise delivery slip — 58 mm thermal' },
+  { document: 'tax', paper: '80mm', label: 'Tax invoice — 80 mm roll' },
+  { document: 'tax', paper: '58mm', label: 'Tax invoice — 58 mm roll' },
 ] as const;
 
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+const salesInvoiceExportColumns: ExportColumn<SalesInvoiceItem>[] = [
+  { header: 'Invoice no', value: (row) => row.invoiceNumber, width: 125 },
+  { header: 'Date', value: (row) => new Date(row.invoiceDate).toLocaleDateString('en-IN'), width: 80 },
+  { header: 'Customer', value: (row) => row.customerName, width: 180 },
+  { header: 'Phone', value: (row) => row.customerMobile ?? '', width: 100 },
+  { header: 'Salesman', value: (row) => row.salesmanName ?? '', width: 120 },
+  { header: 'Billed by', value: (row) => row.billedByName ?? '', width: 120 },
+  { header: 'Total', value: (row) => row.grandTotal, width: 90 },
+  { header: 'Balance', value: (row) => row.balanceAmount, width: 90 },
+  { header: 'Status', value: (row) => row.status, width: 90 },
+  { header: 'SixOrbit', value: (row) => row.sixorbitSyncStatus, width: 100 },
+];
 
 /**
  * Sales invoices: the document that takes stock out and puts the value on the customer's
@@ -70,19 +98,51 @@ export function SalesInvoicesPage(): JSX.Element {
   const pagination = usePagination();
   const customers = useCustomers();
   const branches = useBranches();
+  const { user, hasPermission } = useAuth();
+  const canSyncSixOrbit = hasPermission(PERMISSIONS.SIXORBIT_SYNC);
+  const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
+  const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [customerId, setCustomerId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
+  useEffect(() => {
+    if (!canChangeBranch && user?.branchIds.length) {
+      setBranchId((current) => user.branchIds.includes(current) ? current : user.branchIds[0]!);
+    }
+  }, [canChangeBranch, user?.branchIds]);
   const [status, setStatus] = useState<SalesInvoiceStatus | ''>('');
+  const [fromDate, setFromDate] = useState(() => toDateInput(new Date()));
+  const [toDate, setToDate] = useState(() => toDateInput(new Date()));
 
   const { data, isFetching } = useSalesInvoices(pagination.query, {
+    fromDate,
+    toDate,
     customerId: customerId || undefined,
     branchId: branchId || undefined,
     status: status || undefined,
   });
+  const exportParams = {
+    search: pagination.query.search,
+    customerId: customerId || undefined,
+    branchId: branchId || undefined,
+    status: status || undefined,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+  };
+  const allInvoices = useQuery({
+    queryKey: ['sales-invoices', 'totals', exportParams],
+    queryFn: () => fetchAllListRows<SalesInvoiceItem>('/sales-invoices', exportParams),
+  });
+  const invoiceTotals = useMemo(() => (allInvoices.data ?? [])
+    .filter((invoice) => invoice.status !== 'CANCELLED')
+    .reduce((total, invoice) => ({
+      amount: total.amount + invoice.grandTotal,
+      balance: total.balance + invoice.balanceAmount,
+    }), { amount: 0, balance: 0 }), [allInvoices.data]);
 
   const postInvoice = usePostSalesInvoice();
   const cancelInvoice = useCancelSalesInvoice();
   const deleteInvoice = useDeleteSalesInvoice();
+  const pushSixOrbit = usePushSalesInvoiceToSixOrbit();
 
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [printMenu, setPrintMenu] = useState<{ anchor: HTMLElement; id: string } | null>(null);
@@ -128,20 +188,9 @@ export function SalesInvoicesPage(): JSX.Element {
         valueFormatter: (p) => (p.value ? new Date(p.value as string).toLocaleDateString() : ''),
       },
       { field: 'customerName', headerName: 'Customer', minWidth: 190 },
-      { field: 'branchName', headerName: 'Branch', minWidth: 130 },
-      { field: 'orderNumber', headerName: 'From order', minWidth: 140 },
-      {
-        field: 'dueDate',
-        headerName: 'Due',
-        minWidth: 110,
-        valueFormatter: (p) => (p.value ? new Date(p.value as string).toLocaleDateString() : '—'),
-      },
-      {
-        field: 'gstAmount',
-        headerName: 'GST',
-        maxWidth: 130,
-        valueFormatter: (p) => money(p.value as number),
-      },
+      { field: 'customerMobile', headerName: 'Phone', minWidth: 130 },
+      { field: 'salesmanName', headerName: 'Salesman', minWidth: 150 },
+      { field: 'billedByName', headerName: 'Billed by', minWidth: 150 },
       {
         field: 'grandTotal',
         headerName: 'Total',
@@ -168,26 +217,59 @@ export function SalesInvoicesPage(): JSX.Element {
         ),
       },
       {
+        field: 'sixorbitSyncStatus',
+        headerName: 'SixOrbit',
+        minWidth: 125,
+        cellRenderer: (p: ICellRendererParams<SalesInvoiceItem>) => (
+          <SyncStatusChip status={p.data?.sixorbitSyncStatus ?? null} error={p.data?.sixorbitSyncError} />
+        ),
+      },
+      {
         headerName: '',
-        minWidth: 210,
+        minWidth: 250,
         cellRenderer: (p: ICellRendererParams<SalesInvoiceItem>) => {
           const invoice = p.data;
           if (!invoice) return null;
           const isDraft = invoice.status === 'DRAFT';
           return (
             <>
+              {canSyncSixOrbit && (
+                <Tooltip title={invoice.sixorbitId ? `SixOrbit ${invoice.sixorbitOrderId ?? invoice.sixorbitId}` : 'Push invoice as SixOrbit sales order'}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      disabled={Boolean(invoice.sixorbitId) || invoice.status !== 'POSTED' || pushSixOrbit.isPending}
+                      onClick={() => void (async () => {
+                        setError(null);
+                        try {
+                          const result = await pushSixOrbit.mutateAsync(invoice.id);
+                          setNotice(`${invoice.invoiceNumber}: ${result.message} chkoid ${result.chkoid}.`);
+                        } catch (err) {
+                          setError(err instanceof ApiError ? err.message : 'The SixOrbit push failed');
+                        }
+                      })()}
+                    >
+                      <CloudUploadIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
               <Tooltip title="View lines">
                 <IconButton size="small" onClick={() => setViewingId(invoice.id)}>
                   <VisibilityIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Print tax invoice">
-                <IconButton
-                  size="small"
-                  onClick={(event) => setPrintMenu({ anchor: event.currentTarget, id: invoice.id })}
-                >
-                  <PrintIcon fontSize="small" />
-                </IconButton>
+              <Tooltip title={invoice.status === 'POSTED' ? 'Print invoice or delivery slip' : 'Post the invoice before printing'}>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={invoice.status !== 'POSTED'}
+                    onClick={(event) => setPrintMenu({ anchor: event.currentTarget, id: invoice.id })}
+                  >
+                    <PrintIcon fontSize="small" />
+                  </IconButton>
+                </span>
               </Tooltip>
               <Tooltip title={isDraft ? 'Post: takes the stock out' : 'Already posted'}>
                 <span>
@@ -207,12 +289,18 @@ export function SalesInvoicesPage(): JSX.Element {
                   </IconButton>
                 </span>
               </Tooltip>
-              <Tooltip title="Cancel and return the stock">
+              <Tooltip
+                title={
+                  invoice.returnedAmount > 0
+                    ? 'Invoices with sales returns cannot be cancelled'
+                    : 'Cancel and return the stock'
+                }
+              >
                 <span>
                   <IconButton
                     size="small"
                     color="warning"
-                    disabled={invoice.status === 'CANCELLED'}
+                    disabled={invoice.status === 'CANCELLED' || invoice.returnedAmount > 0}
                     onClick={() => {
                       setCancelling(invoice);
                       setCancelReason('');
@@ -239,7 +327,7 @@ export function SalesInvoicesPage(): JSX.Element {
         },
       },
     ],
-    [],
+    [canSyncSixOrbit, pushSixOrbit],
   );
 
   return (
@@ -254,12 +342,32 @@ export function SalesInvoicesPage(): JSX.Element {
           </Alert>
         )}
         {error && (
-          <Alert severity="error" onClose={() => setError(null)}>
+          <Alert severity="error" onClose={() => setError(null)} sx={{ whiteSpace: 'pre-line' }}>
             {error}
           </Alert>
         )}
 
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <TextField
+            label="From date"
+            type="date"
+            size="small"
+            value={fromDate}
+            onChange={(e) => { setFromDate(e.target.value); pagination.setPage(1); }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ max: toDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <TextField
+            label="To date"
+            type="date"
+            size="small"
+            value={toDate}
+            onChange={(e) => { setToDate(e.target.value); pagination.setPage(1); }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ min: fromDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
           <TextField
             select
             label="Customer"
@@ -285,14 +393,15 @@ export function SalesInvoicesPage(): JSX.Element {
             size="small"
             fullWidth={false}
             value={branchId}
+            disabled={!canChangeBranch && availableBranches.length === 0}
             onChange={(e) => {
               setBranchId(e.target.value);
               pagination.setPage(1);
             }}
             sx={{ width: 180 }}
           >
-            <MenuItem value="">All branches</MenuItem>
-            {(branches.data ?? []).map((b) => (
+            {canChangeBranch && <MenuItem value="">All branches</MenuItem>}
+            {availableBranches.map((b) => (
               <MenuItem key={b.id} value={b.id}>
                 {b.name}
               </MenuItem>
@@ -317,9 +426,22 @@ export function SalesInvoicesPage(): JSX.Element {
               </MenuItem>
             ))}
           </TextField>
+          <ListExportButtons<SalesInvoiceItem>
+            path="/sales-invoices"
+            params={exportParams}
+            columns={salesInvoiceExportColumns}
+            title="Sales Invoices"
+            filename="sales-invoices"
+            onError={setError}
+            footerRows={(rows) => {
+              const totals = rows.filter((row) => row.status !== 'CANCELLED').reduce((sum, row) => ({ amount: sum.amount + row.grandTotal, balance: sum.balance + row.balanceAmount }), { amount: 0, balance: 0 });
+              return [['TOTAL (excluding cancelled)', '', '', '', '', '', totals.amount, totals.balance, '', '']];
+            }}
+          />
         </Stack>
 
         <DataTable
+          exportable={false}
           rows={data?.items ?? []}
           columns={columns}
           meta={data?.meta}
@@ -327,7 +449,13 @@ export function SalesInvoicesPage(): JSX.Element {
           loading={isFetching}
           searchPlaceholder="Search by invoice number or customer…"
           height={580}
+          gridOptions={{ enableCellTextSelection: true, ensureDomOrder: true }}
         />
+        <Stack direction="row" spacing={3} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ px: 1, py: 0.75 }}>
+          <Typography variant="body2" fontWeight={700}>Invoice total: {money(invoiceTotals.amount)}</Typography>
+          <Typography variant="body2" fontWeight={700}>Balance total: {money(invoiceTotals.balance)}</Typography>
+          <Typography variant="caption" color="text.secondary">Cancelled invoices excluded</Typography>
+        </Stack>
       </Stack>
 
       <Menu
@@ -335,16 +463,16 @@ export function SalesInvoicesPage(): JSX.Element {
         anchorEl={printMenu?.anchor ?? null}
         onClose={() => setPrintMenu(null)}
       >
-        {PAPER_SIZES.map((size) => (
+        {PRINT_OPTIONS.map((option) => (
           <MenuItem
-            key={size.value}
+            key={`${option.document}-${option.paper}`}
             onClick={() => {
               const target = printMenu;
               setPrintMenu(null);
-              if (target) navigate(`/sales-invoices/${target.id}/print?paper=${size.value}`);
+              if (target) navigate(`/sales-invoices/${target.id}/print?document=${option.document}&paper=${option.paper}`);
             }}
           >
-            {size.label}
+            {option.label}
           </MenuItem>
         ))}
       </Menu>

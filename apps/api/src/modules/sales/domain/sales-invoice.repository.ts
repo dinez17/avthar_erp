@@ -1,10 +1,13 @@
 import type {
   ProductPriceHint,
+  CreateSalesReturnInput,
+  RefundSalesReturnInput,
   InvoiceableLine,
   Paginated,
   PaginationQuery,
   SalesInvoiceItem,
   SalesInvoicePrintData,
+  SalesReturnItem,
   SalesInvoiceStatus,
   UUID,
 } from '@tiles-erp/shared-types';
@@ -14,8 +17,19 @@ export const SALES_INVOICE_REPOSITORY = Symbol('SALES_INVOICE_REPOSITORY');
 export interface SalesInvoiceFilter {
   customerId?: UUID;
   branchId?: UUID;
+  branchIds?: UUID[];
   salesOrderId?: UUID;
   status?: SalesInvoiceStatus;
+  fromDate?: Date;
+  toDate?: Date;
+}
+
+export interface SalesReturnFilter {
+  customerId?: UUID;
+  branchId?: UUID;
+  branchIds?: UUID[];
+  fromDate?: Date;
+  toDate?: Date;
 }
 
 export interface ResolvedSalesInvoiceLine {
@@ -85,6 +99,8 @@ export interface BillingParties {
 
 /** Port for sales invoice persistence, posting and the order draw-down it depends on. */
 export interface SalesInvoiceRepository {
+  /** Move this order's foreign reservations into its own branch, with transfer documents. */
+  transferOrderStock(salesOrderId: UUID, actorId: UUID, allowedBranchIds: UUID[] | null): Promise<string[]>;
   /** Branch-wise: each branch counts its own series. See NUMBER_SERIES.md. */
   nextInvoiceNumber(branchId?: UUID): Promise<string>;
   list(query: PaginationQuery, filter: SalesInvoiceFilter): Promise<Paginated<SalesInvoiceItem>>;
@@ -104,10 +120,24 @@ export interface SalesInvoiceRepository {
   post(id: UUID, version: number, postedBy: UUID): Promise<SalesInvoiceItem>;
   /** Reverses a posted invoice: stock back in, order draw-down undone. */
   cancel(id: UUID, version: number, reason: string, cancelledBy: UUID): Promise<SalesInvoiceItem>;
+  /** Credits selected invoice quantities and puts them back into their original godowns. */
+  createReturn(
+    id: UUID,
+    data: CreateSalesReturnInput,
+    createdBy: UUID,
+  ): Promise<SalesReturnItem>;
+  listReturns(query: PaginationQuery, filter: SalesReturnFilter): Promise<Paginated<SalesReturnItem>>;
+  findReturnById(id: UUID): Promise<SalesReturnItem | null>;
+  refundReturn(id: UUID, data: RefundSalesReturnInput, actorId: UUID): Promise<SalesReturnItem>;
   softDelete(id: UUID, deletedBy: UUID): Promise<void>;
 
   /** The invoice plus the letterhead, terms and declaration a printed copy needs. */
   printData(id: UUID): Promise<SalesInvoicePrintData | null>;
+  /**
+   * Records issuance of a delivery slip. Regular users may issue it once per invoice;
+   * administrators may issue further copies, all of which remain in the audit trail.
+   */
+  claimDeliverySlipPrint(id: UUID, actorId: UUID, allowReprint: boolean): Promise<void>;
   billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties>;
   /**
    * Refuses lines shipping from a godown that belongs to a different branch.
@@ -119,6 +149,7 @@ export interface SalesInvoiceRepository {
    */
   assertGodownsInBranch(branchId: UUID, godownIds: UUID[]): Promise<void>;
   salesmanName(userId: UUID): Promise<string | null>;
+  orderSalesman(salesOrderId: UUID): Promise<{ userId: UUID | null; name: string | null } | null>;
 
   /**
    * Cost and the branch floor for the products on an invoice.

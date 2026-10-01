@@ -26,6 +26,7 @@ export interface InvoiceWriteData {
   supplierInvoiceNo: string;
   supplierId: UUID;
   branchId: UUID;
+  godownId: UUID | null;
   receiptId: UUID | null;
   invoiceDate: Date;
   dueDate: Date | null;

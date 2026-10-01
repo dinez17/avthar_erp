@@ -455,3 +455,29 @@ export interface PendingDispatchAgeReport {
   /** Boxes waiting in each bucket. */
   buckets: Record<AgeingBucket, { invoices: number; boxes: number; value: number }>;
 }
+
+/** One product line whose posted invoice moved stock out on the selected day. */
+export interface DispatchedProductRow {
+  salesInvoiceId: UUID;
+  invoiceNumber: string;
+  dispatchedAt: ISODateString;
+  customerName: string;
+  branchName: string;
+  productId: UUID;
+  sku: string;
+  productName: string;
+  sizeMm: string | null;
+  boxes: number;
+  pieces: number;
+  qtyBoxes: number;
+  /** Current stock in the invoice branch, summed across all its godowns. */
+  actualStockBoxes: number;
+  /** Most recent movement affecting this product in the invoice branch. */
+  stockUpdatedAt: ISODateString | null;
+}
+
+export interface DispatchedProductReport {
+  date: ISODateString;
+  rows: DispatchedProductRow[];
+  totals: { lines: number; boxes: number; pieces: number; qtyBoxes: number };
+}

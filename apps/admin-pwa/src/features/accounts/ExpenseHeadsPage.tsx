@@ -1,6 +1,9 @@
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   Alert,
   Button,
@@ -25,12 +28,34 @@ import {
 } from '@mui/material';
 import { useMemo, useState } from 'react';
 import { PageContainer } from '@tiles-erp/ui';
-import type { ExpenseHeadItem } from '@tiles-erp/shared-types';
+import type { CashEntryItem, ExpenseHeadItem } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
-import { useDeleteExpenseHead, useExpenseHeads, useSaveExpenseHead } from './api';
+import {
+  downloadTableExcel,
+  downloadTablePdf,
+  type ExportColumn,
+} from '../../components/ListExportButtons';
+import { useDeleteExpenseHead, useExpenseHeadLedger, useExpenseHeads, useSaveExpenseHead } from './api';
+import { AccountBranchSelect, useAccountBranch } from './AccountBranchSelect';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const localDay = (): string => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 10);
+};
+
+const ledgerColumns: ExportColumn<CashEntryItem>[] = [
+  { header: 'Date', value: (entry) => new Date(entry.entryDate).toLocaleDateString('en-IN'), width: 80 },
+  { header: 'Number', value: (entry) => entry.entryNumber, width: 115 },
+  { header: 'Account', value: (entry) => entry.accountName, width: 140 },
+  { header: 'Branch', value: (entry) => entry.branchName, width: 140 },
+  { header: 'Details', value: (entry) => entry.narration ?? entry.referenceNo ?? entry.refNumber ?? '', width: 190 },
+  { header: 'Amount', value: (entry) => entry.direction === 'IN' ? -entry.amount : entry.amount, width: 90 },
+  { header: 'Balance', value: (entry) => entry.balance, width: 90 },
+];
 
 interface Draft {
   id?: string;
@@ -57,13 +82,30 @@ const draftOf = (head: ExpenseHeadItem): Draft => ({
  * drawer" tells you nothing next March, and a free-text note cannot be added up.
  */
 export function ExpenseHeadsPage(): JSX.Element {
+  const branch = useAccountBranch();
   const [showRetired, setShowRetired] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [ledgerHead, setLedgerHead] = useState<ExpenseHeadItem | null>(null);
+  const [ledgerFrom, setLedgerFrom] = useState(localDay());
+  const [ledgerTo, setLedgerTo] = useState(localDay());
   const [error, setError] = useState<string | null>(null);
 
-  const { data: heads = [], isLoading } = useExpenseHeads(showRetired);
+  const { data: heads = [], isLoading } = useExpenseHeads(showRetired, branch.branchId);
   const save = useSaveExpenseHead();
   const remove = useDeleteExpenseHead();
+  const ledger = useExpenseHeadLedger(ledgerHead?.id ?? null, ledgerFrom, ledgerTo, branch.branchId);
+
+  const exportLedger = (format: 'excel' | 'pdf'): void => {
+    if (!ledgerHead || !ledger.data?.entries.length) return;
+    const safeName = ledgerHead.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+    const title = `${ledgerHead.name} Expense Ledger (${ledgerFrom} to ${ledgerTo}) - Net ${money(ledger.data.total)}`;
+    const filename = `expense-ledger-${safeName}-${ledgerFrom}-to-${ledgerTo}`;
+    if (format === 'excel') {
+      downloadTableExcel(`${filename}.xls`, title, ledgerColumns, ledger.data.entries);
+    } else {
+      downloadTablePdf(`${filename}.pdf`, title, ledgerColumns, ledger.data.entries);
+    }
+  };
 
   const totalSpent = useMemo(
     () => heads.reduce((sum, head) => sum + head.spentThisYear, 0),
@@ -118,28 +160,27 @@ export function ExpenseHeadsPage(): JSX.Element {
         </Stack>
       }
     >
+      <Stack sx={{ mb: 2 }}><AccountBranchSelect {...branch} /></Stack>
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      <Paper variant="outlined">
-        <Table size="small">
+      <Paper variant="outlined" sx={{ overflowX: 'auto' }}>
+        <Table size="small" sx={{ minWidth: 760, tableLayout: 'fixed' }}>
           <TableHead>
             <TableRow>
-              <TableCell>Code</TableCell>
-              <TableCell>Head</TableCell>
+              <TableCell sx={{ width: 150 }}>Code</TableCell>
+              <TableCell sx={{ width: '32%' }}>Head</TableCell>
               <TableCell>Notes</TableCell>
-              <TableCell align="right">Spent this year</TableCell>
-              <TableCell align="right" width={110}>
-                &nbsp;
-              </TableCell>
+              <TableCell align="right" sx={{ width: 165 }}>Spent this year</TableCell>
+              <TableCell align="center" sx={{ width: 132 }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {heads.map((head) => (
-              <TableRow key={head.id} hover>
+              <TableRow key={head.id} hover sx={{ '& > td': { py: 1.25 } }}>
                 <TableCell>
                   <Typography variant="body2" fontFamily="monospace">
                     {head.code}
@@ -161,29 +202,34 @@ export function ExpenseHeadsPage(): JSX.Element {
                     {money(head.spentThisYear)}
                   </Typography>
                 </TableCell>
-                <TableCell align="right">
-                  <Tooltip title="Edit">
-                    <IconButton size="small" onClick={() => setDraft(draftOf(head))}>
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip
-                    title={
-                      head.spentThisYear
-                        ? 'Money has been booked here — retire it instead'
-                        : 'Delete'
-                    }
-                  >
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={Boolean(head.spentThisYear)}
-                        onClick={() => void drop(head)}
-                      >
-                        <DeleteIcon fontSize="small" />
+                <TableCell align="center">
+                  <Stack direction="row" spacing={0.25} justifyContent="center" flexWrap="nowrap">
+                    <Tooltip title="Expense ledger">
+                      <IconButton size="small" onClick={() => setLedgerHead(head)}>
+                        <ReceiptLongIcon fontSize="small" />
                       </IconButton>
-                    </span>
-                  </Tooltip>
+                    </Tooltip>
+                    <Tooltip title="Edit">
+                      <IconButton size="small" onClick={() => setDraft(draftOf(head))}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip
+                      title={head.spentThisYear
+                        ? 'Money has been booked here — retire it instead'
+                        : 'Delete'}
+                    >
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={Boolean(head.spentThisYear)}
+                          onClick={() => void drop(head)}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
@@ -215,6 +261,71 @@ export function ExpenseHeadsPage(): JSX.Element {
           </TableBody>
         </Table>
       </Paper>
+
+      <Dialog open={Boolean(ledgerHead)} onClose={() => setLedgerHead(null)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }}>
+            <span>{ledgerHead?.name} expense ledger</span>
+            <Stack direction="row" spacing={1}>
+              <Button
+                size="small" variant="outlined" startIcon={<DownloadIcon />}
+                disabled={!ledger.data?.entries.length} onClick={() => exportLedger('excel')}
+              >Excel</Button>
+              <Button
+                size="small" variant="outlined" startIcon={<PictureAsPdfIcon />}
+                disabled={!ledger.data?.entries.length} onClick={() => exportLedger('pdf')}
+              >PDF</Button>
+            </Stack>
+          </Stack>
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <TextField
+                label="From" type="date" size="small" value={ledgerFrom}
+                onChange={(event) => setLedgerFrom(event.target.value)}
+                InputLabelProps={{ shrink: true }} fullWidth
+              />
+              <TextField
+                label="To" type="date" size="small" value={ledgerTo}
+                onChange={(event) => setLedgerTo(event.target.value)}
+                InputLabelProps={{ shrink: true }} fullWidth
+              />
+            </Stack>
+            {ledger.isError && <Alert severity="error">Could not load the expense ledger.</Alert>}
+            <Paper variant="outlined" sx={{ overflowX: 'auto' }}>
+              <Table size="small" sx={{ minWidth: 700 }}>
+                <TableHead><TableRow>
+                  <TableCell>Date</TableCell><TableCell>Number</TableCell>
+                  <TableCell>Account</TableCell><TableCell>Branch</TableCell>
+                  <TableCell>Details</TableCell><TableCell align="right">Amount</TableCell>
+                  <TableCell align="right">Balance</TableCell>
+                </TableRow></TableHead>
+                <TableBody>
+                  {(ledger.data?.entries ?? []).map((entry) => (
+                    <TableRow key={entry.id} sx={{ opacity: entry.reversedAt ? 0.55 : 1 }}>
+                      <TableCell>{new Date(entry.entryDate).toLocaleDateString('en-IN')}</TableCell>
+                      <TableCell>{entry.entryNumber}</TableCell>
+                      <TableCell>{entry.accountName}</TableCell>
+                      <TableCell>{entry.branchName ?? '—'}</TableCell>
+                      <TableCell>{entry.narration ?? entry.referenceNo ?? entry.refNumber ?? '—'}</TableCell>
+                      <TableCell align="right">{entry.direction === 'IN' ? '-' : ''}{money(entry.amount)}</TableCell>
+                      <TableCell align="right">{money(entry.balance)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!ledger.isLoading && !(ledger.data?.entries.length) && (
+                    <TableRow><TableCell colSpan={7}>No expenses in this period.</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </Paper>
+            <Typography align="right" fontWeight={700}>
+              Net expense: {money(ledger.data?.total ?? 0)}
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setLedgerHead(null)}>Close</Button></DialogActions>
+      </Dialog>
 
       <Dialog open={Boolean(draft)} onClose={() => setDraft(null)} maxWidth="xs" fullWidth>
         <DialogTitle>{draft?.id ? 'Edit expense head' : 'Add expense head'}</DialogTitle>

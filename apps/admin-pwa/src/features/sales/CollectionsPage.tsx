@@ -6,6 +6,7 @@ import PublishIcon from '@mui/icons-material/Publish';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import {
   Alert,
+  Autocomplete,
   Button,
   Chip,
   Dialog,
@@ -27,11 +28,14 @@ import {
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { usePagination } from '@tiles-erp/hooks';
+import { toDateInput } from '@tiles-erp/shared';
 import { ConfirmDialog, PageContainer } from '@tiles-erp/ui';
 import type { CustomerReceiptItem, ReceiptStatus } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
+import { fetchAllListRows, ListExportButtons, type ExportColumn } from '../../components/ListExportButtons';
 import { ApiError } from '../../lib/api-client';
 import { useBranches } from '../products/branch-prices-api';
 import { useCustomers } from './api';
@@ -43,6 +47,7 @@ import {
   useReceipt,
   useReceipts,
 } from './receipts-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<ReceiptStatus, 'default' | 'success' | 'error'> = {
   DRAFT: 'default',
@@ -62,6 +67,18 @@ const PAPER_SIZES = [
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
+const receiptExportColumns: ExportColumn<CustomerReceiptItem>[] = [
+  { header: 'Receipt no', value: (row) => row.receiptNumber, width: 120 },
+  { header: 'Date', value: (row) => new Date(row.receiptDate).toLocaleDateString('en-IN'), width: 80 },
+  { header: 'Customer', value: (row) => row.customerName, width: 170 },
+  { header: 'Branch', value: (row) => row.branchName, width: 140 },
+  { header: 'Paid by', value: (row) => row.modeSummary, width: 150 },
+  { header: 'Received', value: (row) => row.amount, width: 90 },
+  { header: 'Allocated', value: (row) => row.allocatedAmount, width: 90 },
+  { header: 'On account', value: (row) => row.onAccountAmount, width: 90 },
+  { header: 'Status', value: (row) => row.status, width: 80 },
+];
+
 /** Collections: money received from customers and the invoices it settles. */
 export function CollectionsPage(): JSX.Element {
   const navigate = useNavigate();
@@ -69,14 +86,26 @@ export function CollectionsPage(): JSX.Element {
   const customers = useCustomers();
   const branches = useBranches();
   const [customerId, setCustomerId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [status, setStatus] = useState<ReceiptStatus | ''>('');
+  const [fromDate, setFromDate] = useState(() => toDateInput(new Date()));
+  const [toDate, setToDate] = useState(() => toDateInput(new Date()));
 
   const { data, isFetching } = useReceipts(pagination.query, {
+    fromDate,
+    toDate,
     customerId: customerId || undefined,
     branchId: branchId || undefined,
     status: status || undefined,
   });
+  const exportParams = { search: pagination.query.search, fromDate, toDate, customerId: customerId || undefined, branchId: branchId || undefined, status: status || undefined };
+  const allReceipts = useQuery({
+    queryKey: ['receipts', 'totals', exportParams],
+    queryFn: () => fetchAllListRows<CustomerReceiptItem>('/receipts', exportParams),
+  });
+  const receiptTotals = useMemo(() => (allReceipts.data ?? [])
+    .filter((receipt) => receipt.status !== 'CANCELLED')
+    .reduce((total, receipt) => ({ received: total.received + receipt.amount, allocated: total.allocated + receipt.allocatedAmount, onAccount: total.onAccount + receipt.onAccountAmount }), { received: 0, allocated: 0, onAccount: 0 }), [allReceipts.data]);
 
   const postReceipt = usePostReceipt();
   const cancelReceipt = useCancelReceipt();
@@ -259,24 +288,49 @@ export function CollectionsPage(): JSX.Element {
 
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <TextField
-            select
-            label="Customer"
+            label="From date"
+            type="date"
             size="small"
-            fullWidth={false}
-            value={customerId}
-            onChange={(e) => {
-              setCustomerId(e.target.value);
+            value={fromDate}
+            onChange={(event) => {
+              setFromDate(event.target.value);
               pagination.setPage(1);
             }}
-            sx={{ width: 200 }}
-          >
-            <MenuItem value="">All customers</MenuItem>
-            {(customers.data ?? []).map((c) => (
-              <MenuItem key={c.id} value={c.id}>
-                {c.name}
-              </MenuItem>
-            ))}
-          </TextField>
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ max: toDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <TextField
+            label="To date"
+            type="date"
+            size="small"
+            value={toDate}
+            onChange={(event) => {
+              setToDate(event.target.value);
+              pagination.setPage(1);
+            }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ min: fromDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <Autocomplete
+            size="small"
+            options={customers.data ?? []}
+            value={(customers.data ?? []).find((customer) => customer.id === customerId) ?? null}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            getOptionLabel={(customer) =>
+              `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`
+            }
+            onChange={(_, customer) => {
+              setCustomerId(customer?.id ?? '');
+              pagination.setPage(1);
+            }}
+            noOptionsText="No customer found"
+            sx={{ width: { xs: '100%', sm: 280 } }}
+            renderInput={(params) => (
+              <TextField {...params} label="Customer" placeholder="Search name or phone" />
+            )}
+          />
           <TextField
             select
             label="Branch"
@@ -315,9 +369,22 @@ export function CollectionsPage(): JSX.Element {
               </MenuItem>
             ))}
           </TextField>
+          <ListExportButtons<CustomerReceiptItem>
+            path="/receipts"
+            params={exportParams}
+            columns={receiptExportColumns}
+            title="Collections"
+            filename="collections"
+            onError={setError}
+            footerRows={(rows) => {
+              const totals = rows.filter((row) => row.status !== 'CANCELLED').reduce((sum, row) => ({ received: sum.received + row.amount, allocated: sum.allocated + row.allocatedAmount, onAccount: sum.onAccount + row.onAccountAmount }), { received: 0, allocated: 0, onAccount: 0 });
+              return [['TOTAL (excluding cancelled)', '', '', '', '', totals.received, totals.allocated, totals.onAccount, '']];
+            }}
+          />
         </Stack>
 
         <DataTable
+          exportable={false}
           rows={data?.items ?? []}
           columns={columns}
           meta={data?.meta}
@@ -326,6 +393,12 @@ export function CollectionsPage(): JSX.Element {
           searchPlaceholder="Search by receipt number, reference or customer…"
           height={580}
         />
+        <Stack direction="row" spacing={3} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ px: 1, py: 0.75 }}>
+          <Typography variant="body2" fontWeight={700}>Received: {money(receiptTotals.received)}</Typography>
+          <Typography variant="body2" fontWeight={700}>Allocated: {money(receiptTotals.allocated)}</Typography>
+          <Typography variant="body2" fontWeight={700}>On account: {money(receiptTotals.onAccount)}</Typography>
+          <Typography variant="caption" color="text.secondary">Cancelled receipts excluded</Typography>
+        </Stack>
       </Stack>
 
       <Menu

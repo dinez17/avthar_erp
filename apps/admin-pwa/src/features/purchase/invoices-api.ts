@@ -16,6 +16,8 @@ export interface InvoiceFilters {
   supplierId?: string;
   branchId?: string;
   status?: PurchaseInvoiceStatus;
+  fromDate?: string;
+  toDate?: string;
 }
 
 export function usePurchaseInvoices(query: PaginationQuery, filters: InvoiceFilters) {

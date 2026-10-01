@@ -209,11 +209,12 @@ export class PrismaBranchRepository implements OrgNodeRepository {
     _count: { select: { godowns: { where: { deletedAt: null } } } },
   } as const;
 
-  async list(query: PaginationQuery, parentId?: UUID): Promise<Paginated<OrgNodeItem>> {
+  async list(query: PaginationQuery, parentId?: UUID, branchIds?: UUID[]): Promise<Paginated<OrgNodeItem>> {
     const where: Prisma.BranchWhereInput = {
       deletedAt: null,
       name: searchFilter(query.search),
       ...(parentId ? { companyId: parentId } : {}),
+      ...(branchIds ? { id: { in: branchIds } } : {}),
     };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.branch.findMany({

@@ -10,7 +10,7 @@ import type {
   UpdatePartyData,
 } from '../domain/party.repository';
 
-const contactFrom = (row: Customer | Supplier): Omit<PartyItem, 'id' | 'code' | 'name' | 'gstin' | 'panNumber' | 'openingBalance' | 'isActive' | 'notes' | 'type' | 'creditDays' | 'creditLimit' | 'paymentTermDays' | 'version'> => ({
+const contactFrom = (row: Customer | Supplier): Omit<PartyItem, 'id' | 'code' | 'name' | 'gstin' | 'panNumber' | 'openingBalance' | 'isActive' | 'notes' | 'type' | 'creditDays' | 'creditLimit' | 'paymentTermDays' | 'version' | 'sixorbitId' | 'sixorbitAlid' | 'sixorbitSyncStatus' | 'sixorbitSyncError'> => ({
   contactPerson: row.contactPerson,
   phone: row.phone,
   altPhone: row.altPhone,
@@ -37,6 +37,10 @@ const customerToItem = (row: Customer): PartyItem => ({
   creditLimit: Number(row.creditLimit),
   paymentTermDays: null,
   version: row.version,
+  sixorbitId: row.sixorbitId,
+  sixorbitAlid: row.sixorbitAlid,
+  sixorbitSyncStatus: row.sixorbitSyncStatus,
+  sixorbitSyncError: row.sixorbitSyncError,
   ...contactFrom(row),
 });
 
@@ -54,6 +58,10 @@ const supplierToItem = (row: Supplier): PartyItem => ({
   creditLimit: null,
   paymentTermDays: row.paymentTermDays,
   version: row.version,
+  sixorbitId: null,
+  sixorbitAlid: null,
+  sixorbitSyncStatus: null,
+  sixorbitSyncError: null,
   ...contactFrom(row),
 });
 

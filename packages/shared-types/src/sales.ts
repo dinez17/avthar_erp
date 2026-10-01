@@ -22,6 +22,8 @@ export interface QuotationLineItem {
   productName: string;
   sizeMm: string | null;
   piecesPerBox: number;
+  /** Product-master weight for one piece, in kilograms. */
+  weightKg: number | null;
   baseUom: ProductUom;
   /** Quantity as entered at the counter. */
   boxes: number;
@@ -119,6 +121,7 @@ export interface ProductPriceHint {
   baseUom: ProductUom;
   mrp: number | null;
   gstRate: number;
+  /** Tax-exclusive values used by the sales line calculator. */
   landingCost: number | null;
   displayPrice: number | null;
   minSellingPrice: number | null;
@@ -191,6 +194,11 @@ export interface SalesOrderItem {
   grandTotal: number;
   remarks: string | null;
   cancelReason: string | null;
+  sixorbitId: string | null;
+  sixorbitOrderId: string | null;
+  sixorbitSyncStatus: import('./product').ProductSyncStatus;
+  sixorbitSyncedAt: ISODateString | null;
+  sixorbitSyncError: string | null;
   lineCount: number;
   totalBoxes: number;
   version: number;
@@ -334,6 +342,7 @@ export interface PrintPartyBlock {
 /** Everything a quotation print needs in one call: document, letterhead and terms. */
 export interface QuotationPrintData {
   quotation: QuotationItem;
+  customerPincode: string | null;
   company: PrintPartyBlock;
   branch: PrintPartyBlock;
   /** Editable from Settings under `quotation.terms`; blank lines are dropped. */
@@ -350,6 +359,8 @@ export interface SalesInvoiceLineItem {
   productName: string;
   sizeMm: string | null;
   piecesPerBox: number;
+  /** Product-master weight for one piece, in kilograms. */
+  weightKg: number | null;
   baseUom: ProductUom;
   hsnCode: string | null;
   godownId: UUID;
@@ -359,6 +370,8 @@ export interface SalesInvoiceLineItem {
   boxes: number;
   pieces: number;
   qtyBoxes: number;
+  /** Quantity already credited and received through sales returns. */
+  returnedQtyBoxes: number;
   mrp: number | null;
   rate: number;
   discountPct: number;
@@ -384,6 +397,8 @@ export interface SalesInvoiceItem {
   placeOfSupply: string | null;
   salesmanUserId: UUID | null;
   salesmanName: string | null;
+  /** User who created the invoice. */
+  billedByName: string | null;
   branchId: UUID;
   branchName: string;
   invoiceDate: ISODateString;
@@ -402,16 +417,85 @@ export interface SalesInvoiceItem {
   roundOff: number;
   grandTotal: number;
   paidAmount: number;
-  /** Grand total less what has been collected. */
+  returnedAmount: number;
+  /** Grand total less collections and posted sales returns. */
   balanceAmount: number;
   remarks: string | null;
   cancelReason: string | null;
+  sixorbitId: string | null;
+  sixorbitOrderId: string | null;
+  sixorbitSyncStatus: import('./product').ProductSyncStatus;
+  sixorbitSyncedAt: ISODateString | null;
+  sixorbitSyncError: string | null;
   lineCount: number;
   totalBoxes: number;
   /** True when the customer is in another state, so IGST applies. */
   isInterState: boolean;
   version: number;
   lines?: SalesInvoiceLineItem[];
+}
+
+export interface CreateSalesReturnLineInput {
+  salesInvoiceLineId: UUID;
+  boxes: number;
+  pieces: number;
+}
+
+export interface CreateSalesReturnInput {
+  reason: string;
+  remarks?: string;
+  returnDate?: ISODateString;
+  lines: CreateSalesReturnLineInput[];
+}
+
+export interface RefundSalesReturnInput {
+  accountId: UUID;
+  amount: number;
+  refundDate?: ISODateString;
+  referenceNo?: string;
+  remarks?: string;
+}
+
+export interface SalesReturnItem {
+  id: UUID;
+  returnNumber: string;
+  salesInvoiceId: UUID;
+  invoiceNumber: string;
+  customerId: UUID;
+  customerName: string;
+  branchId: UUID;
+  branchName: string;
+  returnDate: ISODateString;
+  reason: string;
+  remarks: string | null;
+  subTotal: number;
+  gstAmount: number;
+  grandTotal: number;
+  refundedAmount: number;
+  refundableAmount: number;
+  lineCount: number;
+  totalBoxes: number;
+  lines?: SalesReturnLineItem[];
+}
+
+export interface SalesReturnLineItem {
+  id: UUID;
+  productId: UUID;
+  sku: string;
+  productName: string;
+  sizeMm: string | null;
+  piecesPerBox: number;
+  baseUom: ProductUom;
+  godownId: UUID;
+  godownName: string;
+  boxes: number;
+  pieces: number;
+  qtyBoxes: number;
+  rate: number;
+  gstRate: number;
+  lineSubTotal: number;
+  lineGst: number;
+  lineTotal: number;
 }
 
 export interface SalesInvoiceLineInput {
@@ -491,6 +575,13 @@ export interface InvoiceableLine {
 /** Everything a tax invoice print needs in one call. */
 export interface SalesInvoicePrintData {
   invoice: SalesInvoiceItem;
+  /**
+   * Physical picking rows for the delivery slip. Automatic inter-branch transfers are
+   * expanded back to their supplying godown, while the tax invoice remains billed by
+   * the destination branch.
+   */
+  deliveryLines?: SalesInvoiceLineItem[];
+  customerPincode: string | null;
   company: PrintPartyBlock;
   branch: PrintPartyBlock;
   /** Editable from Settings under `invoice.terms`; blank lines are dropped. */
@@ -597,7 +688,7 @@ export interface OpenInvoiceItem {
   overdueDays: number;
 }
 
-export type LedgerEntryType = 'OPENING' | 'INVOICE' | 'RECEIPT';
+export type LedgerEntryType = 'OPENING' | 'INVOICE' | 'SALES_RETURN' | 'REFUND' | 'RECEIPT';
 
 export interface LedgerEntry {
   date: ISODateString;
@@ -831,6 +922,10 @@ export interface ProfitRow {
   /** Margin as a percentage of revenue. Zero revenue reports zero rather than infinity. */
   marginPct: number;
   qtyBoxes: number;
+  /** Whole boxes entered on the posted invoice lines. */
+  boxes: number;
+  /** Loose pieces entered on the posted invoice lines. */
+  pieces: number;
   /**
    * Revenue on lines with no cost recorded — invoices posted before margin was tracked.
    *

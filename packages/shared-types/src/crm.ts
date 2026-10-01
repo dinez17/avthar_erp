@@ -28,6 +28,8 @@ export interface LeadItem {
   altPhone: string | null;
   email: string | null;
   city: string | null;
+  state: string | null;
+  pincode: string | null;
   source: LeadSource;
   stage: LeadStage;
   ownerUserId: UUID | null;
@@ -62,7 +64,9 @@ export interface CreateLeadInput {
   phone?: string;
   altPhone?: string;
   email?: string;
-  city?: string;
+  city: string;
+  state: string;
+  pincode: string;
   source?: LeadSource;
   stage?: LeadStage;
   ownerUserId?: UUID | null;
@@ -306,4 +310,3 @@ export interface CreateSalesVisitInput {
 export interface UpdateSalesVisitInput extends Partial<Omit<CreateSalesVisitInput, 'leadId'>> {
   version: number;
 }
-

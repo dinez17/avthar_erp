@@ -30,15 +30,17 @@ import {
   Typography,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
-import { formatBoxPieces } from '@tiles-erp/shared';
+import { useEffect, useMemo, useState } from 'react';
+import { formatBoxPieces, toDateInput } from '@tiles-erp/shared';
 import { usePagination } from '@tiles-erp/hooks';
 import { ConfirmDialog, PageContainer } from '@tiles-erp/ui';
 import { OrderSplitPanel } from './OrderSplitPanel';
 import type { SalesOrderItem, SalesOrderStatus } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
+import { ListExportButtons, type ExportColumn } from '../../components/ListExportButtons';
 import { ApiError } from '../../lib/api-client';
 import { useBranches } from '../products/branch-prices-api';
+import { useAuth } from '../../auth/AuthProvider';
 import { useCustomers, useQuotations } from './api';
 import {
   useCancelSalesOrder,
@@ -50,6 +52,7 @@ import {
   useSalesOrders,
 } from './orders-api';
 import { SalesInvoiceDialog } from './SalesInvoiceDialog';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<SalesOrderStatus, 'default' | 'info' | 'success' | 'error'> = {
   DRAFT: 'default',
@@ -70,6 +73,16 @@ const STATUSES: SalesOrderStatus[] = [
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
+const salesOrderExportColumns: ExportColumn<SalesOrderItem>[] = [
+  { header: 'Order no', value: (row) => row.orderNumber, width: 125 },
+  { header: 'Date', value: (row) => new Date(row.orderDate).toLocaleDateString('en-IN'), width: 80 },
+  { header: 'Customer', value: (row) => row.customerName, width: 180 },
+  { header: 'Salesman', value: (row) => row.salesmanName, width: 130 },
+  { header: 'From quote', value: (row) => row.quotationNumber, width: 120 },
+  { header: 'Total', value: (row) => row.grandTotal, width: 90 },
+  { header: 'Status', value: (row) => row.status.replaceAll('_', ' '), width: 120 },
+];
+
 /**
  * Sales orders: convert an accepted quotation, confirm to reserve stock, and cancel to
  * release it again. Invoicing against these orders follows in the next sprint.
@@ -78,11 +91,23 @@ export function SalesOrdersPage(): JSX.Element {
   const pagination = usePagination();
   const customers = useCustomers();
   const branches = useBranches();
+  const { user } = useAuth();
+  const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
+  const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [customerId, setCustomerId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
+  useEffect(() => {
+    if (!canChangeBranch && user?.branchIds.length) {
+      setBranchId((current) => user.branchIds.includes(current) ? current : user.branchIds[0]!);
+    }
+  }, [canChangeBranch, user?.branchIds]);
   const [status, setStatus] = useState<SalesOrderStatus | ''>('');
+  const [fromDate, setFromDate] = useState(() => toDateInput(new Date()));
+  const [toDate, setToDate] = useState(() => toDateInput(new Date()));
 
   const { data, isFetching } = useSalesOrders(pagination.query, {
+    fromDate,
+    toDate,
     customerId: customerId || undefined,
     branchId: branchId || undefined,
     status: status || undefined,
@@ -180,16 +205,8 @@ export function SalesOrdersPage(): JSX.Element {
         valueFormatter: (p) => (p.value ? new Date(p.value as string).toLocaleDateString() : ''),
       },
       { field: 'customerName', headerName: 'Customer', minWidth: 190 },
-      { field: 'branchName', headerName: 'Branch', minWidth: 130 },
       { field: 'salesmanName', headerName: 'Salesman', minWidth: 130 },
       { field: 'quotationNumber', headerName: 'From quote', minWidth: 140 },
-      {
-        field: 'deliveryDate',
-        headerName: 'Delivery',
-        minWidth: 115,
-        valueFormatter: (p) => (p.value ? new Date(p.value as string).toLocaleDateString() : '—'),
-      },
-      { field: 'lineCount', headerName: 'Lines', maxWidth: 90 },
       {
         field: 'grandTotal',
         headerName: 'Total',
@@ -348,6 +365,26 @@ export function SalesOrdersPage(): JSX.Element {
 
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <TextField
+            label="From date"
+            type="date"
+            size="small"
+            value={fromDate}
+            onChange={(e) => { setFromDate(e.target.value); pagination.setPage(1); }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ max: toDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <TextField
+            label="To date"
+            type="date"
+            size="small"
+            value={toDate}
+            onChange={(e) => { setToDate(e.target.value); pagination.setPage(1); }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ min: fromDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <TextField
             select
             label="Customer"
             size="small"
@@ -372,14 +409,15 @@ export function SalesOrdersPage(): JSX.Element {
             size="small"
             fullWidth={false}
             value={branchId}
+            disabled={!canChangeBranch && availableBranches.length === 0}
             onChange={(e) => {
               setBranchId(e.target.value);
               pagination.setPage(1);
             }}
             sx={{ width: 180 }}
           >
-            <MenuItem value="">All branches</MenuItem>
-            {(branches.data ?? []).map((b) => (
+            {canChangeBranch && <MenuItem value="">All branches</MenuItem>}
+            {availableBranches.map((b) => (
               <MenuItem key={b.id} value={b.id}>
                 {b.name}
               </MenuItem>
@@ -404,9 +442,25 @@ export function SalesOrdersPage(): JSX.Element {
               </MenuItem>
             ))}
           </TextField>
+          <ListExportButtons<SalesOrderItem>
+            path="/sales-orders"
+            params={{
+              search: pagination.query.search,
+              customerId: customerId || undefined,
+              branchId: branchId || undefined,
+              status: status || undefined,
+              fromDate: fromDate || undefined,
+              toDate: toDate || undefined,
+            }}
+            columns={salesOrderExportColumns}
+            title="Sales Orders"
+            filename="sales-orders"
+            onError={setError}
+          />
         </Stack>
 
         <DataTable
+          exportable={false}
           rows={data?.items ?? []}
           columns={columns}
           meta={data?.meta}
@@ -414,6 +468,7 @@ export function SalesOrdersPage(): JSX.Element {
           loading={isFetching}
           searchPlaceholder="Search by order number or customer…"
           height={580}
+          gridOptions={{ enableCellTextSelection: true, ensureDomOrder: true }}
         />
       </Stack>
 

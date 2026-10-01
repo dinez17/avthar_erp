@@ -1,6 +1,5 @@
 import {
   buildSixOrbitPushPlan,
-  CARRIED_FORWARD,
   SIXORBIT_MEASUREMENT,
   sqftPerPiece,
   type SixOrbitPushInput,
@@ -14,6 +13,7 @@ const input = (over: Partial<SixOrbitPushInput> = {}): SixOrbitPushInput => ({
   gstRate: 18,
   sellingRate: 635.59,
   purchaseRate: 109,
+  franchiseeRate: null,
   mrp: null,
   piecesPerBox: 3,
   sqftPerBox: 24,
@@ -44,6 +44,7 @@ describe('buildSixOrbitPushPlan — create', () => {
     expect(plan.operation).toBe('create');
     expect(plan.blocks).toEqual([]);
     expect(plan.payload.isvid).toBeUndefined();
+    expect(plan.payload.sku_code).toBe('');
   });
 
   it('maps into their write field names, which differ from their read names', () => {
@@ -62,9 +63,41 @@ describe('buildSixOrbitPushPlan — create', () => {
     });
   });
 
+  it('sends the selected branch franchisee rate and product purchase rate', () => {
+    const payload = buildSixOrbitPushPlan(input({ franchiseeRate: 120.5, purchaseRate: 79 })).payload;
+    expect(payload.dealer_price).toBe('120.5');
+    expect(payload.purchase_price).toBe('79');
+  });
+
   it('sends attributes as the id pairs their API wants, not our labels', () => {
     const plan = buildSixOrbitPushPlan(input());
     expect(plan.payload.attributes).toEqual([{ aid: '410000891', avid: '410540575' }]);
+  });
+
+  it('uses the Variation Add field set with neutral values for data ERP does not hold', () => {
+    const payload = buildSixOrbitPushPlan(input()).payload;
+    expect(Object.keys(payload).sort()).toEqual(
+      [
+        'e_commerce_id', 'item_name', 'item_tax', 'hsn', 'unit', 'company',
+        'default_vendor', 'min_discount', 'max_discount', 'price', 'measurement_unit',
+        'sku_code', 'purchase_price', 'dealer_price', 'brand', 'categories',
+        'measurements', 'mrp', 'package_qty', 'weight', 'incentive', 'item_cess',
+        'profitability', 'barcode', 'shelf', 'material', 'fixed_price', 'pcount',
+        'pc_meaid', 'pcount_meaid', 'pcount_qty', 'stock_available', 'rack_code',
+        'images', 'attributes', 'package_meaid', 'default_base', 'default_price_base',
+      ].sort(),
+    );
+    expect(payload).toMatchObject({
+      e_commerce_id: '',
+      dealer_price: '0.00',
+      weight: '0.00000000',
+      incentive: '0.00000000',
+      profitability: '0.00000000',
+      package_meaid: SIXORBIT_MEASUREMENT.BOX,
+      default_base: '0',
+      default_price_base: '0',
+    });
+    expect(new Set([payload.unit, payload.measurement_unit, payload.package_meaid]).size).toBe(3);
   });
 });
 
@@ -87,6 +120,66 @@ describe('buildSixOrbitPushPlan — edit', () => {
     weight: '15.00000000',
     price: '600.00000000',
   };
+
+  it('builds the requested edit data object for SKU 11475', () => {
+    const plan = buildSixOrbitPushPlan(
+      input({
+        sixorbitId: '140124',
+        name: '2X2 CERAMICS TILES BOX  (2X2)',
+        sku: '11475',
+        sellingRate: 95.47,
+        purchaseRate: 79,
+        piecesPerBox: 4,
+        sqftPerBox: 16,
+        brandSixorbitId: '410012247',
+        categorySixorbitId: '410053695',
+        attributes: [{ aid: '410000891', attr_name: 'SIZE', avid: '410540570', attr_value: '2X2' }],
+        raw: {
+          dealer_price: '0.00',
+          weight: '7.00000000',
+          incentive: '0.00000000',
+          profitability: '0.00000000',
+          e_commerce_id: '0',
+          package_meaid: '27',
+        },
+      }),
+    );
+
+    expect(plan.payload).toEqual({
+      item_type: 'Closed Stock',
+      product_type: 'Product',
+      item_service: '0',
+      fixed_price: ['0'],
+      pcount: ['1'],
+      images: [],
+      company: '',
+      default_vendor: '',
+      rack_code: '',
+      dealer_price: '0.00',
+      weight: '7.00000000',
+      incentive: '0.00000000',
+      profitability: '0.00000000',
+      item_name: '2X2 CERAMICS TILES BOX  (2X2)',
+      sku_code: '11475',
+      hsn: '69072100',
+      item_tax: '18',
+      price: '95.47',
+      purchase_price: '79',
+      mrp: '0',
+      package_qty: '4',
+      measurements: '4',
+      unit: '27',
+      measurement_unit: '10',
+      pcount_meaid: '27',
+      pc_meaid: '10',
+      barcode: '',
+      brand: '410012247',
+      categories: [{ id: '410053695' }],
+      attributes: [{ aid: '410000891', avid: '410540570' }],
+      stock_available: ['1'],
+      isvid: '140124',
+    });
+  });
 
   it('edits when they already have it', () => {
     const plan = buildSixOrbitPushPlan(input({ sixorbitId: '160595', raw }));
@@ -125,17 +218,6 @@ describe('buildSixOrbitPushPlan — edit', () => {
     ]) {
       expect(plan.payload).not.toHaveProperty(stale);
     }
-  });
-
-  it('sends no field a create would not, beyond isvid and the carried-forward list', () => {
-    // Their documented edit request is their create request plus `isvid`. Anything an edit
-    // sends outside that — or outside the fields we deliberately preserve — is a key
-    // nobody has evidence their form accepts.
-    const create = buildSixOrbitPushPlan(input());
-    const edit = buildSixOrbitPushPlan(input({ sixorbitId: '160595', raw }));
-
-    const allowed = new Set<string>([...Object.keys(create.payload), ...CARRIED_FORWARD, 'isvid']);
-    expect(Object.keys(edit.payload).filter((k) => !allowed.has(k))).toEqual([]);
   });
 
   it('carries the name we hold, not the one they last sent us', () => {

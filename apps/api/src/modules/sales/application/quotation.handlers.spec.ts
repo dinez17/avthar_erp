@@ -4,6 +4,10 @@ import {
   ChangeQuotationStatusHandler,
   CreateQuotationCommand,
   CreateQuotationHandler,
+  ListQuotationsHandler,
+  ListQuotationsQuery,
+  UpdateQuotationCommand,
+  UpdateQuotationHandler,
 } from './quotation.handlers';
 import type { QuotationRepository } from '../domain/quotation.repository';
 import type { ProductPriceHint, QuotationItem } from '@tiles-erp/shared-types';
@@ -43,15 +47,81 @@ const mockRepo = (): jest.Mocked<QuotationRepository> => ({
   customerSnapshot: jest
     .fn()
     .mockResolvedValue({ name: 'Walk-in', address: null, mobile: null }),
+  customerByPhone: jest.fn().mockResolvedValue(null),
   registerWalkIn: jest
     .fn()
     .mockResolvedValue({ customerId: 'c-new', customerCode: 'CUST-000042', created: true }),
   priceHints: jest.fn().mockResolvedValue(new Map([['p1', hint]])),
 });
 
-const base = { customerId: 'c1', branchId: 'b1' };
+const base = { customerId: 'c1', branchId: 'b1', customerMobile: '9894477819' };
+
+describe('ListQuotationsHandler', () => {
+  it('restricts a sales-role user to their own quotations', async () => {
+    const repo = mockRepo();
+    repo.isSalesman.mockResolvedValue(true);
+    repo.list.mockResolvedValue({
+      items: [],
+      meta: {
+        page: 1,
+        pageSize: 25,
+        totalItems: 0,
+        totalPages: 0,
+        hasPreviousPage: false,
+        hasNextPage: false,
+      },
+    });
+
+    await new ListQuotationsHandler(repo).execute(
+      new ListQuotationsQuery(
+        { page: 1, pageSize: 25 },
+        { branchIds: ['branch-1'], salesmanUserId: 'another-salesman' },
+        'logged-in-salesman',
+      ),
+    );
+
+    expect(repo.list).toHaveBeenCalledWith(
+      { page: 1, pageSize: 25 },
+      { branchIds: ['branch-1'], salesmanUserId: 'logged-in-salesman' },
+    );
+  });
+});
 
 describe('CreateQuotationHandler', () => {
+  it('requires a mobile number', async () => {
+    const repo = mockRepo();
+    await expect(new CreateQuotationHandler(repo).execute(
+      new CreateQuotationCommand({ ...base, customerId: undefined, customerMobile: undefined, lines: [] }, 'a', NO_RIGHTS),
+    )).rejects.toThrow('mobile number is required');
+  });
+
+  it('uses the saved customer name when the mobile already exists', async () => {
+    const repo = mockRepo();
+    repo.customerByPhone.mockResolvedValue({ id: 'dinesh-id', name: 'DINESHBABU VENUGOPAL', mobile: '9894477819' });
+    const handler = new CreateQuotationHandler(repo);
+    await handler.execute(new CreateQuotationCommand({
+      ...base, customerId: undefined, customerName: 'ganesh',
+      lines: [{ productId: 'p1', qtyBoxes: 1, rate: 1250 }],
+    }, 'a', NO_RIGHTS));
+    const [, data] = repo.create.mock.calls[0]!;
+    expect(data).toMatchObject({ customerId: 'dinesh-id', customerName: 'DINESHBABU VENUGOPAL' });
+  });
+
+  it('reverses GST from the full inclusive line amount', async () => {
+    const repo = mockRepo();
+    const handler = new CreateQuotationHandler(repo);
+    await handler.execute(
+      new CreateQuotationCommand(
+        { ...base, lines: [{ productId: 'p1', qtyBoxes: 10, rate: 420 / 1.18 }] },
+        'a',
+        ALL_RIGHTS,
+      ),
+    );
+    const [, data] = repo.create.mock.calls[0]!;
+    expect(data.lines[0]).toMatchObject({ lineSubTotal: 3559.32, lineGst: 640.68, lineTotal: 4200 });
+    expect(data.grandTotal).toBe(4200);
+  });
+
   it("falls back to the branch selling price when no rate is given", async () => {
     const repo = mockRepo();
     const handler = new CreateQuotationHandler(repo);
@@ -210,6 +280,42 @@ describe('CreateQuotationHandler', () => {
     await expect(
       handler.execute(new CreateQuotationCommand({ ...base, lines: [line, line] }, 'a', NO_RIGHTS)),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+describe('UpdateQuotationHandler', () => {
+  const existing = {
+    id: 'q1',
+    customerId: 'c1',
+    customerName: 'Customer',
+    branchId: 'b1',
+    status: 'SENT',
+    freightCharge: 0,
+    unloadingCharge: 0,
+    loadingCharge: 0,
+    roundOff: 0,
+  } as QuotationItem;
+
+  it('allows changes after sending but before customer acceptance', async () => {
+    const repo = mockRepo();
+    repo.findById.mockResolvedValue(existing);
+    repo.update.mockResolvedValue(existing);
+    await new UpdateQuotationHandler(repo).execute(new UpdateQuotationCommand(
+      'q1',
+      { version: 2, lines: [{ productId: 'p1', qtyBoxes: 2, rate: 1250 }] },
+      'a',
+      NO_RIGHTS,
+    ));
+    expect(repo.update).toHaveBeenCalledWith('q1', 2, expect.objectContaining({ branchId: 'b1' }), 'a');
+  });
+
+  it('blocks changes once the customer accepts', async () => {
+    const repo = mockRepo();
+    repo.findById.mockResolvedValue({ ...existing, status: 'ACCEPTED' });
+    await expect(new UpdateQuotationHandler(repo).execute(new UpdateQuotationCommand(
+      'q1', { version: 3 }, 'a', NO_RIGHTS,
+    ))).rejects.toBeInstanceOf(ValidationError);
+    expect(repo.update).not.toHaveBeenCalled();
   });
 });
 

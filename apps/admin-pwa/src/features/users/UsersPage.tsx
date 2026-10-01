@@ -26,6 +26,7 @@ import { ConfirmDialog, PageContainer, useSaveShortcut } from '@tiles-erp/ui';
 import type { UserListItem } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
 import { ApiError } from '../../lib/api-client';
+import { useBranches } from '../products/branch-prices-api';
 import { useRoles } from '../roles/api';
 import { useCreateUser, useDeleteUser, useUpdateUser, useUsers } from './api';
 
@@ -41,6 +42,7 @@ const userFormSchema = z.object({
   firstName: z.string().trim().min(1, 'Required'),
   lastName: z.string().trim().min(1, 'Required'),
   isActive: z.boolean(),
+  branchIds: z.array(z.string().uuid()),
   roleIds: z.array(z.string().uuid()).min(1, 'Assign at least one role'),
 });
 
@@ -53,12 +55,14 @@ const emptyValues: UserFormValues = {
   lastName: '',
   isActive: true,
   roleIds: [],
+  branchIds: [],
 };
 
 export function UsersPage(): JSX.Element {
   const pagination = usePagination();
   const { data, isFetching } = useUsers(pagination.query);
   const rolesQuery = useRoles({ page: 1, pageSize: 100, sortOrder: 'asc' });
+  const branchesQuery = useBranches();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
@@ -90,6 +94,7 @@ export function UsersPage(): JSX.Element {
       lastName: user.lastName,
       isActive: user.isActive,
       roleIds: user.roles.map((r) => r.id),
+      branchIds: user.branches.map((b) => b.id),
     });
     setDialogOpen(true);
   };
@@ -104,6 +109,7 @@ export function UsersPage(): JSX.Element {
           lastName: values.lastName,
           isActive: values.isActive,
           roleIds: values.roleIds,
+          branchIds: values.branchIds,
           ...(values.password ? { password: values.password } : {}),
           version: editing.version,
         });
@@ -119,7 +125,7 @@ export function UsersPage(): JSX.Element {
           lastName: values.lastName,
           isActive: values.isActive,
           roleIds: values.roleIds,
-          branchIds: [],
+          branchIds: values.branchIds,
           departmentIds: [],
         });
       }
@@ -144,6 +150,11 @@ export function UsersPage(): JSX.Element {
             {p.data?.roles.map((r) => <Chip key={r.id} label={r.name} size="small" />)}
           </Stack>
         ),
+      },
+      {
+        headerName: 'Branches',
+        minWidth: 200,
+        valueGetter: (p) => p.data?.branches.map((b) => b.name).join(', ') || 'Not assigned',
       },
       {
         field: 'isActive',
@@ -186,7 +197,7 @@ export function UsersPage(): JSX.Element {
   return (
     <PageContainer
       title="Users"
-      subtitle="Manage user accounts, status and role assignment."
+      subtitle="Manage user accounts, roles and branch access."
       actions={
         <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
           New user
@@ -254,6 +265,32 @@ export function UsersPage(): JSX.Element {
                     {(rolesQuery.data?.items ?? []).map((role) => (
                       <MenuItem key={role.id} value={role.id}>
                         {role.name}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                )}
+              />
+              <Controller
+                control={form.control}
+                name="branchIds"
+                render={({ field, fieldState }) => (
+                  <TextField
+                    select
+                    label="Branches"
+                    slotProps={{ select: { multiple: true } }}
+                    value={field.value}
+                    onChange={field.onChange}
+                    disabled={branchesQuery.isPending || branchesQuery.isError}
+                    error={Boolean(fieldState.error) || branchesQuery.isError}
+                    helperText={fieldState.error?.message || (branchesQuery.isError
+                      ? 'Could not load branches. Close and reopen this form to retry.'
+                      : 'Select the branches this user can work in. No selection grants no branch access.')}
+                  >
+                    {[...(branchesQuery.data ?? []), ...(editing?.branches ?? []).filter(
+                      (assigned) => !(branchesQuery.data ?? []).some((branch) => branch.id === assigned.id),
+                    )].map((branch) => (
+                      <MenuItem key={branch.id} value={branch.id}>
+                        {branch.name}
                       </MenuItem>
                     ))}
                   </TextField>

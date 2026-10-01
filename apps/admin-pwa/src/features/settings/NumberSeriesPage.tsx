@@ -35,6 +35,7 @@ const LABELS: Record<DocumentType, string> = {
   GOODS_RECEIPT: 'Goods receipt',
   PURCHASE_INVOICE: 'Purchase invoice',
   PURCHASE_RETURN: 'Purchase return',
+  SALES_RETURN: 'Sales return',
   SUPPLIER_PAYMENT: 'Supplier payment',
   STOCK_TRANSFER: 'Stock transfer',
   TRANSFER_CHALLAN: 'Transfer — delivery challan',
@@ -50,7 +51,7 @@ const LABELS: Record<DocumentType, string> = {
 };
 
 const GROUPS: { title: string; types: DocumentType[] }[] = [
-  { title: 'Sales', types: ['QUOTATION', 'SALES_ORDER', 'SALES_INVOICE', 'RECEIPT'] },
+  { title: 'Sales', types: ['QUOTATION', 'SALES_ORDER', 'SALES_INVOICE', 'SALES_RETURN', 'RECEIPT'] },
   {
     title: 'Purchase',
     types: [

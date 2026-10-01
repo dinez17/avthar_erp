@@ -64,7 +64,7 @@ export class SalesOrderLineDto {
 
   @ApiProperty({ description: "Blank uses the branch's selling price" })
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsNumber({ maxDecimalPlaces: 8 })
   @Min(0)
   rate!: number;
 
@@ -284,6 +284,16 @@ export class CancelSalesOrderDto extends VersionDto {
 }
 
 export class SalesOrderListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  toDate?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsUUID('4')
   @IsOptional()

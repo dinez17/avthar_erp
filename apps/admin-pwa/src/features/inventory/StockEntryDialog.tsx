@@ -2,6 +2,8 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import {
   Alert,
+  Autocomplete,
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -9,10 +11,13 @@ import {
   DialogTitle,
   IconButton,
   MenuItem,
+  Paper,
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { useState } from 'react';
 import type { OrgNodeItem, ProductItem, StockEntryLine } from '@tiles-erp/shared-types';
 import { useSaveShortcut } from '@tiles-erp/ui';
@@ -58,6 +63,8 @@ export function StockEntryDialog({
   products,
   onClose,
 }: StockEntryDialogProps): JSX.Element {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down('sm'));
   const postOpening = usePostOpeningStock();
   const postAdjustment = usePostAdjustment();
   const [lines, setLines] = useState<DraftLine[]>([blankLine]);
@@ -147,17 +154,20 @@ export function StockEntryDialog({
       }}
       maxWidth="md"
       fullWidth
+      fullScreen={mobile}
     >
-      <DialogTitle>{isAdjustment ? 'Stock adjustment' : 'Opening stock'}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+      <DialogTitle sx={{ px: { xs: 2, sm: 3 }, py: { xs: 1.5, sm: 2 }, fontSize: { xs: 20, sm: 22 } }}>
+        {isAdjustment ? 'Stock adjustment' : 'Opening stock'}
+      </DialogTitle>
+      <DialogContent sx={{ px: { xs: 1.5, sm: 3 }, pb: { xs: 11, sm: 2 } }}>
+        <Stack spacing={{ xs: 2, sm: 1.5 }} sx={{ mt: 0.5 }}>
           {error && <Alert severity="error">{error}</Alert>}
           {done !== null && <Alert severity="success">Posted {done} movement(s).</Alert>}
-          <Typography variant="caption" color="text.secondary">
+          <Alert severity="info" icon={false} sx={{ fontSize: { xs: 14, sm: 12 } }}>
             {isAdjustment
               ? 'Use negative quantities to reduce stock. Every posting is recorded in the ledger.'
               : 'Opening stock can be declared once per product and godown; later corrections go through adjustments.'}
-          </Typography>
+          </Alert>
 
           {isAdjustment && (
             <TextField
@@ -166,11 +176,15 @@ export function StockEntryDialog({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Physical count correction, damage, breakage…"
+              sx={{ '& .MuiInputBase-root': { minHeight: { xs: 52, sm: 'auto' }, fontSize: { xs: 16, sm: 14 } } }}
             />
           )}
 
-          {lines.map((line, index) => (
-            <Stack key={index} direction="row" spacing={1} alignItems="center">
+          {lines.map((line, index) => {
+            const selectedProduct = products.find((product) => product.id === line.productId) ?? null;
+            return (
+            <Box key={index}>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ display: { xs: 'none', sm: 'flex' } }}>
               <TextField
                 select
                 label="Product"
@@ -234,12 +248,79 @@ export function StockEntryDialog({
                 <DeleteIcon fontSize="small" />
               </IconButton>
             </Stack>
-          ))}
+            <Paper variant="outlined" sx={{ display: { xs: 'block', sm: 'none' }, p: 1.5, borderRadius: 2 }}>
+              <Stack spacing={1.5}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="subtitle1" fontWeight={700}>Stock line {index + 1}</Typography>
+                  <IconButton
+                    color="error"
+                    aria-label={`Remove stock line ${index + 1}`}
+                    onClick={() => setLines((prev) => prev.filter((_, i) => i !== index))}
+                    disabled={lines.length === 1}
+                    sx={{ minWidth: 44, minHeight: 44 }}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </Stack>
+                <Autocomplete
+                  options={products}
+                  value={selectedProduct}
+                  getOptionLabel={(product) => `${product.sku} — ${product.name}`}
+                  isOptionEqualToValue={(option, value) => option.id === value.id}
+                  onChange={(_, value) => setLine(index, { productId: value?.id ?? '' })}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Product *"
+                      placeholder="Search product or SKU"
+                      sx={{ '& .MuiInputBase-root': { minHeight: 52, fontSize: 16 } }}
+                    />
+                  )}
+                />
+                <TextField
+                  select
+                  label="Godown *"
+                  value={line.godownId}
+                  onChange={(event) => setLine(index, { godownId: event.target.value })}
+                  sx={{ '& .MuiInputBase-root': { minHeight: 52, fontSize: 16 } }}
+                >
+                  {godowns.map((godown) => (
+                    <MenuItem key={godown.id} value={godown.id}>{godown.name}</MenuItem>
+                  ))}
+                </TextField>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1.25 }}>
+                  <TextField
+                    label="Batch"
+                    value={line.batchNo}
+                    onChange={(event) => setLine(index, { batchNo: event.target.value })}
+                    sx={{ '& .MuiInputBase-root': { minHeight: 52, fontSize: 16 } }}
+                  />
+                  <TextField
+                    label="Shade"
+                    value={line.shade}
+                    onChange={(event) => setLine(index, { shade: event.target.value })}
+                    sx={{ '& .MuiInputBase-root': { minHeight: 52, fontSize: 16 } }}
+                  />
+                </Box>
+                <TextField
+                  label={isAdjustment ? 'Adjustment boxes *' : 'Opening boxes *'}
+                  type="number"
+                  value={line.qtyBoxes}
+                  onChange={(event) => setLine(index, { qtyBoxes: event.target.value })}
+                  helperText={isAdjustment ? 'Use a negative value to reduce stock' : undefined}
+                  inputProps={{ inputMode: 'decimal' }}
+                  sx={{ '& .MuiInputBase-root': { minHeight: 52, fontSize: 16 } }}
+                />
+              </Stack>
+            </Paper>
+            </Box>
+          );})}
 
           <Button
             startIcon={<AddIcon />}
             onClick={() => setLines((prev) => [...prev, blankLine])}
-            sx={{ alignSelf: 'flex-start' }}
+            variant="outlined"
+            sx={{ alignSelf: { xs: 'stretch', sm: 'flex-start' }, minHeight: { xs: 48, sm: 'auto' }, fontSize: { xs: 15, sm: 'inherit' } }}
           >
             Add line
           </Button>
@@ -250,20 +331,23 @@ export function StockEntryDialog({
             onChange={(e) => setRemarks(e.target.value)}
             multiline
             minRows={2}
+            sx={{ '& .MuiInputBase-root': { fontSize: { xs: 16, sm: 14 } } }}
           />
         </Stack>
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ position: { xs: 'fixed', sm: 'static' }, left: 0, right: 0, bottom: 0, zIndex: 2, bgcolor: 'background.paper', borderTop: { xs: 1, sm: 0 }, borderColor: 'divider', p: { xs: 1, sm: 2 }, pb: { xs: 'max(8px, env(safe-area-inset-bottom))', sm: 2 } }}>
         <Button
           onClick={() => {
             reset();
             onClose();
           }}
           color="inherit"
+          variant={mobile ? 'outlined' : 'text'}
+          sx={{ flex: { xs: 1, sm: 'initial' }, minHeight: { xs: 48, sm: 'auto' } }}
         >
           Close
         </Button>
-        <Button variant="contained" onClick={() => void submit()} disabled={pending}>
+        <Button variant="contained" onClick={() => void submit()} disabled={pending} sx={{ flex: { xs: 1, sm: 'initial' }, minHeight: { xs: 48, sm: 'auto' } }}>
           {pending ? 'Posting…' : 'Post'}
         </Button>
       </DialogActions>

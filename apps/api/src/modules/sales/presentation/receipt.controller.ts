@@ -67,6 +67,8 @@ export class ReceiptController {
   list(@Query() query: ReceiptListQueryDto): Promise<Paginated<CustomerReceiptItem>> {
     return this.queryBus.execute(
       new ListReceiptsQuery(query, {
+        fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
+        toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
         customerId: query.customerId,
         branchId: query.branchId,
         status: query.status,

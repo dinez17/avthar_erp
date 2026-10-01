@@ -14,6 +14,8 @@ export const QUOTATION_REPOSITORY = Symbol('QUOTATION_REPOSITORY');
 export interface QuotationFilter {
   customerId?: UUID;
   branchId?: UUID;
+  branchIds?: UUID[];
+  salesmanUserId?: UUID;
   status?: QuotationStatus;
   fromDate?: Date;
   toDate?: Date;
@@ -87,6 +89,7 @@ export interface QuotationRepository {
   customerSnapshot(
     customerId: UUID,
   ): Promise<{ name: string; address: string | null; mobile: string | null }>;
+  customerByPhone(phone: string): Promise<{ id: UUID; name: string; mobile: string | null } | null>;
   /**
    * Gives a walk-in quotation a customer master record and links it.
    *

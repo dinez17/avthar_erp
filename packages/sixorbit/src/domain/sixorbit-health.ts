@@ -20,6 +20,7 @@ export const SIXORBIT_ENTITY_TYPES: readonly SixOrbitEntityType[] = [
   'CUSTOMER',
   'PRODUCT',
   'SALES_ORDER',
+  'SALES_INVOICE',
 ];
 
 /** One `groupBy(entityType, success)` row from inside the window. */

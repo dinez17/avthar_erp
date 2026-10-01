@@ -15,6 +15,8 @@ import type {
 export const RECEIPT_REPOSITORY = Symbol('RECEIPT_REPOSITORY');
 
 export interface ReceiptFilter {
+  fromDate?: Date;
+  toDate?: Date;
   customerId?: UUID;
   branchId?: UUID;
   status?: ReceiptStatus;

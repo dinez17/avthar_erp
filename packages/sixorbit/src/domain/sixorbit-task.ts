@@ -27,8 +27,8 @@ export interface SixOrbitTaskSpec {
   /**
    * How the JSON in the `data` field is shaped for POSTs.
    *
-   * Not cosmetic: `customer/*` expects a JSON object and `variation/*` expects a JSON
-   * array holding one object. Sending the wrong shape is silently rejected.
+   * The multipart `data` value is serialized as one JSON object for writes in this
+   * integration. Keep the task setting explicit so each endpoint can be reviewed.
    */
   readonly bodyShape?: 'object' | 'array';
 }
@@ -80,19 +80,25 @@ export const SIXORBIT_TASKS = {
     version: '4.0',
     method: 'POST',
     authenticated: true,
-    bodyShape: 'array',
+    bodyShape: 'object',
   },
   EDIT_VARIATION: {
     task: 'variation/edit_variation_submit',
     version: '4.0',
     method: 'POST',
     authenticated: true,
-    bodyShape: 'array',
+    bodyShape: 'object',
   },
 
   // ---- customers (12.5) ----
   SEARCH_CUSTOMER: {
     task: 'quotation/quotation_search_customer',
+    version: '4.0',
+    method: 'GET',
+    authenticated: true,
+  },
+  FETCH_CUSTOMER_FORM: {
+    task: 'customer/fetch_addCustomer_form_data',
     version: '4.0',
     method: 'GET',
     authenticated: true,
@@ -110,6 +116,24 @@ export const SIXORBIT_TASKS = {
     method: 'POST',
     authenticated: true,
     bodyShape: 'object',
+  },
+  CUSTOMER_ADDRESS_LIST: {
+    task: 'customer/customer_address_list',
+    version: '4.0',
+    method: 'GET',
+    authenticated: true,
+  },
+  ADD_CUSTOMER_ADDRESS: {
+    task: 'customer/add_customer_address',
+    version: '4.0',
+    method: 'GET',
+    authenticated: true,
+  },
+  UPDATE_CUSTOMER_ADDRESS: {
+    task: 'customer/edit_address_submit',
+    version: '4.0',
+    method: 'GET',
+    authenticated: true,
   },
   FETCH_COUNTRIES_STATES: {
     task: 'user/fetch_countries_states',
@@ -131,6 +155,18 @@ export const SIXORBIT_TASKS = {
   },
 
   // ---- orders (12.6) ----
+  FETCH_ORDER_FORM_DATA: {
+    task: 'chkorder/fetch_order_formData',
+    version: '4.0',
+    method: 'GET',
+    authenticated: true,
+  },
+  FETCH_ORDER_TEMPLATES: {
+    task: 'chkorder/fetch_order_templates',
+    version: '4.0',
+    method: 'GET',
+    authenticated: true,
+  },
   CREATE_ORDER: {
     task: 'chkorder/create_order_submit',
     version: '4.0',

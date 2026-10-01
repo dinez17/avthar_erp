@@ -102,7 +102,13 @@ export class PrismaDashboardRepository implements DashboardRepository {
       // Outstanding is a live figure, not a windowed one: every unpaid invoice counts.
       this.prisma.salesInvoice.findMany({
         where: postedInvoice,
-        select: { invoiceDate: true, dueDate: true, grandTotal: true, paidAmount: true },
+        select: {
+          invoiceDate: true,
+          dueDate: true,
+          grandTotal: true,
+          paidAmount: true,
+          returnedAmount: true,
+        },
       }),
       this.prisma.salesOrder.findMany({
         where: {
@@ -147,7 +153,11 @@ export class PrismaDashboardRepository implements DashboardRepository {
     let outstandingValue = 0;
     let overdueValue = 0;
     for (const invoice of openInvoices) {
-      const balance = round2(Number(invoice.grandTotal) - Number(invoice.paidAmount));
+      const balance = round2(
+        Number(invoice.grandTotal) -
+          Number(invoice.paidAmount) -
+          Number(invoice.returnedAmount),
+      );
       if (balance <= 0.005) continue;
       outstandingValue = round2(outstandingValue + balance);
       if (isOverdue(invoice.dueDate, invoice.invoiceDate)) {

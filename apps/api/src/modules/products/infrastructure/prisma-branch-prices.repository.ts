@@ -24,6 +24,7 @@ type PriceRow = {
   displayPrice: Prisma.Decimal;
   minSellingPrice: Prisma.Decimal;
   sellingPrice: Prisma.Decimal;
+  franchiseeRate: Prisma.Decimal;
   version: number;
 };
 
@@ -35,9 +36,12 @@ const toItem = (product: ProductRow, price?: PriceRow): BranchPriceItem => ({
   categoryName: product.category.name,
   sizeMm: product.sizeMm,
   landingCost: product.landingCost === null ? null : Number(product.landingCost),
+  gstRate: Number(product.gstRate),
+  mrp: product.mrp === null ? null : Number(product.mrp),
   displayPrice: price ? Number(price.displayPrice) : null,
   minSellingPrice: price ? Number(price.minSellingPrice) : null,
   sellingPrice: price ? Number(price.sellingPrice) : null,
+  franchiseeRate: price ? Number(price.franchiseeRate) : null,
   version: price?.version ?? 0,
 });
 
@@ -134,9 +138,9 @@ export class PrismaBranchPricesRepository implements BranchPricesRepository {
       );
     }
 
-    await this.prisma.$transaction(
-      items.map((item) =>
-        this.prisma.productBranchPrice.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of items) {
+        await tx.productBranchPrice.upsert({
           where: { productId_branchId: { productId: item.productId, branchId } },
           create: {
             productId: item.productId,
@@ -144,6 +148,7 @@ export class PrismaBranchPricesRepository implements BranchPricesRepository {
             displayPrice: item.displayPrice,
             minSellingPrice: item.minSellingPrice,
             sellingPrice: item.sellingPrice,
+            franchiseeRate: item.franchiseeRate ?? 0,
             createdBy: actorId,
             updatedBy: actorId,
           },
@@ -151,12 +156,19 @@ export class PrismaBranchPricesRepository implements BranchPricesRepository {
             displayPrice: item.displayPrice,
             minSellingPrice: item.minSellingPrice,
             sellingPrice: item.sellingPrice,
+            ...(item.franchiseeRate !== undefined ? { franchiseeRate: item.franchiseeRate } : {}),
             updatedBy: actorId,
             version: { increment: 1 },
           },
-        }),
-      ),
-    );
+        });
+        if (item.mrp !== undefined) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { mrp: item.mrp, updatedBy: actorId },
+          });
+        }
+      }
+    });
 
     const rows = await this.prisma.product.findMany({
       where: { id: { in: productIds } },

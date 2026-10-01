@@ -112,13 +112,26 @@ export function parseSixOrbitBody<T>(body: string): SixOrbitOutcome<T> {
   try {
     parsed = JSON.parse(body) as unknown;
   } catch {
-    const preview = redactSecretsInText(body.slice(0, 200));
-    return {
-      ok: false,
-      kind: 'TRANSPORT',
-      resultCode: null,
-      message: `SixOrbit returned a non-JSON response: ${preview || '(empty body)'}`,
-    };
+    // Some SixOrbit endpoints print PHP notices before their otherwise valid JSON
+    // envelope. Recover only a trailing object with the expected envelope marker;
+    // arbitrary HTML or malformed responses must remain transport failures.
+    const envelopeStart = body.lastIndexOf('{"success":');
+    if (envelopeStart >= 0) {
+      try {
+        parsed = JSON.parse(body.slice(envelopeStart).trim()) as unknown;
+      } catch {
+        parsed = undefined;
+      }
+    }
+    if (parsed === undefined) {
+      const preview = redactSecretsInText(body.slice(0, 200));
+      return {
+        ok: false,
+        kind: 'TRANSPORT',
+        resultCode: null,
+        message: `SixOrbit returned a non-JSON response: ${preview || '(empty body)'}`,
+      };
+    }
   }
 
   if (typeof parsed !== 'object' || parsed === null) {

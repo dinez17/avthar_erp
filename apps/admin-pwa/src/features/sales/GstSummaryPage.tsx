@@ -19,6 +19,7 @@ import { apiFetch } from '../../lib/api-client';
 import { downloadFile } from '../../lib/download';
 import { useBranches } from '../products/branch-prices-api';
 import { Gstr1SheetView } from './Gstr1SheetView';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -68,7 +69,7 @@ export function GstSummaryPage(): JSX.Element {
   const branches = useBranches();
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(monthEnd);
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

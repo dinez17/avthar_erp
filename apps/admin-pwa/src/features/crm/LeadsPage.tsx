@@ -15,19 +15,23 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   FormControlLabel,
   IconButton,
   MenuItem,
   Paper,
   Stack,
   Switch,
+  TablePagination,
   TextField,
   Tooltip,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
-import { usePagination } from '@tiles-erp/hooks';
+import { useEffect, useMemo, useState } from 'react';
+import { useDebounce, usePagination } from '@tiles-erp/hooks';
 import { ConfirmDialog, PageContainer } from '@tiles-erp/ui';
 import type { LeadItem, LeadSource, LeadStage } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
@@ -55,11 +59,14 @@ import {
   STAGE_LABELS,
   STAGES,
 } from './config';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const isSettled = (stage: LeadStage): boolean =>
   stage === 'CONVERTED' || stage === 'NOT_INTERESTED';
 
 export function LeadsPage(): JSX.Element {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down('sm'));
   const pagination = usePagination();
   const branches = useBranches();
   const salesmen = useSalesmen();
@@ -68,9 +75,15 @@ export function LeadsPage(): JSX.Element {
   const [stage, setStage] = useState<LeadStage | ''>('');
   const [source, setSource] = useState<LeadSource | ''>('');
   const [ownerUserId, setOwnerUserId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [campaignId, setCampaignId] = useState('');
   const [followUpDue, setFollowUpDue] = useState(false);
+  const [mobileSearch, setMobileSearch] = useState('');
+  const debouncedMobileSearch = useDebounce(mobileSearch, 350);
+
+  useEffect(() => {
+    if (mobile) pagination.setSearch(debouncedMobileSearch);
+  }, [debouncedMobileSearch, mobile, pagination.setSearch]);
 
   const filters: LeadFilters = {
     stage: stage || undefined,
@@ -281,6 +294,7 @@ export function LeadsPage(): JSX.Element {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
+          fullWidth={mobile}
           onClick={() => {
             setEditing(null);
             setFormOpen(true);
@@ -302,12 +316,18 @@ export function LeadsPage(): JSX.Element {
           </Alert>
         )}
 
-        <Paper variant="outlined" sx={{ p: 1.25 }}>
+        <Paper variant="outlined" sx={{ p: { xs: 1, sm: 1.25 } }}>
           <Stack direction="row" spacing={0.75} alignItems="center" mb={1}>
             <TimelineIcon fontSize="small" color="action" />
             <Typography variant="subtitle2">Pipeline</Typography>
           </Stack>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Stack
+            direction="row"
+            spacing={1}
+            flexWrap={{ xs: 'nowrap', sm: 'wrap' }}
+            useFlexGap
+            sx={{ overflowX: { xs: 'auto', sm: 'visible' }, pb: { xs: 0.5, sm: 0 } }}
+          >
             {(pipeline.data ?? STAGES.map((s) => ({ stage: s, count: 0, expectedValue: 0 }))).map(
               (col) => (
                 <Box
@@ -319,6 +339,7 @@ export function LeadsPage(): JSX.Element {
                     border: '1px solid',
                     borderColor: 'divider',
                     minWidth: 110,
+                    flexShrink: 0,
                   }}
                 >
                   <Chip
@@ -336,7 +357,14 @@ export function LeadsPage(): JSX.Element {
           </Stack>
         </Paper>
 
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(auto-fit, minmax(160px, max-content))' },
+            gap: 1,
+            alignItems: 'center',
+          }}
+        >
           <TextField
             select
             label="Stage"
@@ -346,7 +374,7 @@ export function LeadsPage(): JSX.Element {
               setStage(e.target.value as LeadStage | '');
               pagination.setPage(1);
             }}
-            sx={{ width: 160 }}
+            sx={{ width: { xs: '100%', sm: 160 } }}
           >
             <MenuItem value="">All stages</MenuItem>
             {STAGES.map((s) => (
@@ -364,7 +392,7 @@ export function LeadsPage(): JSX.Element {
               setSource(e.target.value as LeadSource | '');
               pagination.setPage(1);
             }}
-            sx={{ width: 160 }}
+            sx={{ width: { xs: '100%', sm: 160 } }}
           >
             <MenuItem value="">All sources</MenuItem>
             {SOURCES.map((s) => (
@@ -382,7 +410,7 @@ export function LeadsPage(): JSX.Element {
               setOwnerUserId(e.target.value);
               pagination.setPage(1);
             }}
-            sx={{ width: 170 }}
+            sx={{ width: { xs: '100%', sm: 170 } }}
           >
             <MenuItem value="">All salesmen</MenuItem>
             {(salesmen.data ?? []).map((u) => (
@@ -400,7 +428,7 @@ export function LeadsPage(): JSX.Element {
               setBranchId(e.target.value);
               pagination.setPage(1);
             }}
-            sx={{ width: 170 }}
+            sx={{ width: { xs: '100%', sm: 170 } }}
           >
             <MenuItem value="">All branches</MenuItem>
             {(branches.data ?? []).map((b) => (
@@ -418,7 +446,7 @@ export function LeadsPage(): JSX.Element {
               setCampaignId(e.target.value);
               pagination.setPage(1);
             }}
-            sx={{ width: 180 }}
+            sx={{ width: { xs: '100%', sm: 180 } }}
           >
             <MenuItem value="">All campaigns</MenuItem>
             {(campaigns.data ?? []).map((c) => (
@@ -438,18 +466,81 @@ export function LeadsPage(): JSX.Element {
               />
             }
             label="Follow-up due"
+            sx={{ m: 0, gridColumn: { xs: '1 / -1', sm: 'auto' } }}
           />
-        </Stack>
+        </Box>
 
-        <DataTable
-          rows={data?.items ?? []}
-          columns={columns}
-          meta={data?.meta}
-          pagination={pagination}
-          loading={isFetching}
-          searchPlaceholder="Search by name, company, phone or code…"
-          height={540}
-        />
+        {mobile ? (
+          <Stack spacing={1}>
+            <TextField
+              placeholder="Search by name, company, phone or code…"
+              size="small"
+              fullWidth
+              value={mobileSearch}
+              onChange={(event) => setMobileSearch(event.target.value)}
+            />
+            {!isFetching && (data?.items.length ?? 0) === 0 && (
+              <Alert severity="info">No leads match the selected filters.</Alert>
+            )}
+            {(data?.items ?? []).map((lead) => (
+              <Paper key={lead.id} variant="outlined" sx={{ overflow: 'hidden' }}>
+                <Stack spacing={1} sx={{ p: 1.5 }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary">{lead.code}</Typography>
+                      <Typography variant="subtitle2" fontWeight={800}>{lead.name}</Typography>
+                      {lead.companyName && <Typography variant="body2" color="text.secondary">{lead.companyName}</Typography>}
+                    </Box>
+                    <Chip label={STAGE_LABELS[lead.stage]} size="small" color={STAGE_COLORS[lead.stage]} />
+                  </Stack>
+                  <Divider />
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1 }}>
+                    <Box><Typography variant="caption" color="text.secondary">Phone</Typography><Typography variant="body2">{lead.phone || '—'}</Typography></Box>
+                    <Box><Typography variant="caption" color="text.secondary">Salesman</Typography><Typography variant="body2">{lead.ownerName || '—'}</Typography></Box>
+                    <Box><Typography variant="caption" color="text.secondary">Source</Typography><Typography variant="body2">{SOURCE_LABELS[lead.source]}</Typography></Box>
+                    <Box><Typography variant="caption" color="text.secondary">Value</Typography><Typography variant="body2" fontWeight={700}>{money(lead.expectedValue)}</Typography></Box>
+                    <Box sx={{ gridColumn: '1 / -1' }}>
+                      <Typography variant="caption" color="text.secondary">Follow-up</Typography>
+                      <Typography variant="body2" color={lead.followUpOverdue ? 'warning.main' : 'text.primary'} fontWeight={lead.followUpOverdue ? 700 : 400}>
+                        {lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).toLocaleDateString() : '—'}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Stack>
+                <Divider />
+                <Stack direction="row" justifyContent="space-around" sx={{ py: 0.5 }}>
+                  <IconButton aria-label="Edit lead" onClick={() => { setEditing(lead); setFormOpen(true); }}><EditIcon /></IconButton>
+                  <IconButton aria-label="Lead calls" color="info" onClick={() => setCalling(lead)}><PhoneIcon /></IconButton>
+                  <IconButton aria-label="Lead visits" color="info" onClick={() => setVisiting(lead)}><EventIcon /></IconButton>
+                  <IconButton aria-label="Move lead stage" disabled={isSettled(lead.stage)} onClick={() => { setStaging(lead); setNewStage(lead.stage === 'NEW' ? 'FOLLOW_UP' : 'NEW'); setLostReason(''); }}><MoveUpIcon /></IconButton>
+                  <IconButton aria-label="Convert lead" color="primary" disabled={Boolean(lead.convertedQuotationId) || isSettled(lead.stage)} onClick={() => setConverting(lead)}><RequestQuoteIcon /></IconButton>
+                  <IconButton aria-label="Delete lead" color="error" onClick={() => setDeleting(lead)}><DeleteIcon /></IconButton>
+                </Stack>
+              </Paper>
+            ))}
+            <TablePagination
+              component="div"
+              count={data?.meta.totalItems ?? 0}
+              page={(data?.meta.page ?? 1) - 1}
+              rowsPerPage={data?.meta.pageSize ?? 25}
+              rowsPerPageOptions={[25, 50, 100]}
+              onPageChange={(_, page) => pagination.setPage(page + 1)}
+              onRowsPerPageChange={(event) => pagination.setPageSize(Number(event.target.value))}
+              labelRowsPerPage="Rows"
+              sx={{ '& .MuiTablePagination-toolbar': { px: 0, flexWrap: 'wrap', justifyContent: 'flex-end' } }}
+            />
+          </Stack>
+        ) : (
+          <DataTable
+            rows={data?.items ?? []}
+            columns={columns}
+            meta={data?.meta}
+            pagination={pagination}
+            loading={isFetching}
+            searchPlaceholder="Search by name, company, phone or code…"
+            height={540}
+          />
+        )}
       </Stack>
 
       <LeadFormDialog

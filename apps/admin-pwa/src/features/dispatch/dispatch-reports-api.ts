@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { endOfDayIso, startOfDayIso } from '@tiles-erp/shared';
 import type {
+  DispatchedProductReport,
   DriverCashReport,
   FreightCollectionReport,
   PendingDispatchAgeReport,
@@ -9,6 +10,16 @@ import type {
 import { apiFetch } from '../../lib/api-client';
 
 const KEY = 'dispatch-reports';
+
+export function useDispatchedProducts(date: string, branchId: string, enabled: boolean) {
+  const params = new URLSearchParams({ date: startOfDayIso(date) });
+  if (branchId) params.set('branchId', branchId);
+  return useQuery({
+    queryKey: [KEY, 'dispatched-products', date, branchId || null],
+    queryFn: () => apiFetch<DispatchedProductReport>(`/dispatch-reports/dispatched-products?${params.toString()}`),
+    enabled: enabled && Boolean(date),
+  });
+}
 
 /** The period every dispatch report takes, as a query string. */
 function periodParams(from: string, to: string, branchId: string): string {

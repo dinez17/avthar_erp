@@ -22,6 +22,7 @@ export class PushProductToSixOrbitCommand {
   constructor(
     public readonly productId: string,
     public readonly actorId: string,
+    public readonly branchId: string,
   ) {}
 }
 
@@ -44,12 +45,16 @@ async function enqueue(
   productId: string,
   actorId: string | null,
 ): Promise<void> {
-  await prisma.product.update({
+  const product = await prisma.product.update({
     where: { id: productId },
     data: { sixorbitSyncStatus: 'PENDING', sixorbitSyncError: null },
   });
   const data: SixOrbitProductPushJobData = { kind: 'PRODUCT_PUSH', productId, actorId };
   const jobId = `product-push:${productId}`;
+  // A create sends no local SKU, so a timeout after SixOrbit commits cannot be found
+  // by searching for that SKU. Do not automatically retry an unlinked create; linked
+  // edits can still use the normal transport retries.
+  const attempts = product.sixorbitId ? 3 : 1;
 
   // BullMQ treats a jobId as unique across jobs it has *retained*, not merely across jobs
   // in flight — and this queue keeps the last thousand completed and five thousand failed.
@@ -58,12 +63,12 @@ async function enqueue(
   // PENDING for ever. Clearing the retained job first is what makes the id reusable.
   try {
     await queue.remove(jobId);
-    await queue.add('product-push', data, { jobId });
+    await queue.add('product-push', data, { jobId, attempts });
   } catch {
     // The job could not be removed because it is running right now. Reusing the id would
     // be dropped again, so this one goes on unkeyed: a second push of the same product is
     // wasteful, but losing the edit that prompted it is worse.
-    await queue.add('product-push', data);
+    await queue.add('product-push', data, { attempts });
   }
 }
 
@@ -127,7 +132,7 @@ export class PushProductToSixOrbitHandler implements ICommandHandler<
       select: { id: true },
     });
     if (!product) throw new NotFoundError('Product not found');
-    return this.pusher.push(product.id, null);
+    return this.pusher.push(product.id, null, command.branchId);
   }
 }
 

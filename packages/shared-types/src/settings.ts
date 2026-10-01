@@ -62,6 +62,7 @@ export type DocumentType =
   | 'GOODS_RECEIPT'
   | 'PURCHASE_INVOICE'
   | 'PURCHASE_RETURN'
+  | 'SALES_RETURN'
   | 'SUPPLIER_PAYMENT'
   | 'STOCK_TRANSFER'
   | 'TRANSFER_CHALLAN'
@@ -191,6 +192,14 @@ export interface ExpenseHeadItem {
   version: number;
 }
 
+export interface ExpenseHeadLedger {
+  head: ExpenseHeadItem;
+  from: ISODateString;
+  to: ISODateString;
+  total: number;
+  entries: CashEntryItem[];
+}
+
 export interface SaveExpenseHeadInput {
   code?: string;
   name: string;
@@ -230,6 +239,8 @@ export interface CashEntryInput {
   entryDate?: ISODateString;
   type: Exclude<CashEntryType, 'TRANSFER'>;
   amount: number;
+  /** Links a manual payment refund to the customer's ledger. */
+  customerId?: UUID | null;
   expenseHeadId?: UUID | null;
   referenceNo?: string;
   narration?: string;

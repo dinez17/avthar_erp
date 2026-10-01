@@ -40,6 +40,7 @@ import {
   useSupplierPayment,
   useSupplierPayments,
 } from './supplier-payments-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<ReceiptStatus, 'default' | 'success' | 'error'> = {
   DRAFT: 'default',
@@ -66,7 +67,7 @@ export function SupplierPaymentsPage(): JSX.Element {
   const suppliers = useSuppliers();
   const branches = useBranches();
   const [supplierId, setSupplierId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [status, setStatus] = useState<ReceiptStatus | ''>('');
 
   const { data, isFetching } = useSupplierPayments(pagination.query, {

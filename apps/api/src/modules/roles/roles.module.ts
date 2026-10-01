@@ -6,6 +6,7 @@ import { RolesController } from './presentation/roles.controller';
 import { CreateRoleHandler } from './application/commands/create-role.handler';
 import { UpdateRoleHandler } from './application/commands/update-role.handler';
 import { DeleteRoleHandler } from './application/commands/delete-role.handler';
+import { GetRoleHandler } from './application/queries/get-role.handler';
 import { ListRolesHandler } from './application/queries/list-roles.handler';
 import { ListPermissionsHandler } from './application/queries/list-permissions.handler';
 
@@ -19,6 +20,7 @@ import { ListPermissionsHandler } from './application/queries/list-permissions.h
     UpdateRoleHandler,
     DeleteRoleHandler,
     ListRolesHandler,
+    GetRoleHandler,
     ListPermissionsHandler,
   ],
 })

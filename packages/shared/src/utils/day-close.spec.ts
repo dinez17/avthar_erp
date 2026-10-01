@@ -37,23 +37,29 @@ describe('hasCounted', () => {
 });
 
 describe('isDayLocked', () => {
-  const CLOSED = new Date(2026, 7, 14);
+  const CLOSED = new Date('2026-08-14T00:00:00.000Z');
 
   it('is open when nothing has ever been closed', () => {
-    expect(isDayLocked(new Date(2026, 7, 14), null)).toBe(false);
+    expect(isDayLocked(new Date('2026-08-14T00:00:00.000Z'), null)).toBe(false);
   });
 
   it('locks the closed day itself, at any hour', () => {
-    expect(isDayLocked(new Date(2026, 7, 14, 23, 59), CLOSED)).toBe(true);
-    expect(isDayLocked(new Date(2026, 7, 14, 0, 1), CLOSED)).toBe(true);
+    expect(isDayLocked(new Date('2026-08-14T18:29:00.000Z'), CLOSED)).toBe(true);
+    expect(isDayLocked(new Date('2026-08-13T18:31:00.000Z'), CLOSED)).toBe(true);
   });
 
   it('locks everything before it', () => {
-    expect(isDayLocked(new Date(2026, 6, 30), CLOSED)).toBe(true);
+    expect(isDayLocked(new Date('2026-07-30T00:00:00.000Z'), CLOSED)).toBe(true);
   });
 
   it('leaves the next day open', () => {
-    expect(isDayLocked(new Date(2026, 7, 15, 0, 0), CLOSED)).toBe(false);
+    expect(isDayLocked(new Date('2026-08-14T18:30:00.000Z'), CLOSED)).toBe(false);
+  });
+
+  it('treats India midnight sent as the previous UTC evening as the next open day', () => {
+    const closed = new Date('2026-09-28T00:00:00.000Z');
+    const indiaMidnight = new Date('2026-09-28T18:30:00.000Z');
+    expect(isDayLocked(indiaMidnight, closed)).toBe(false);
   });
 });
 

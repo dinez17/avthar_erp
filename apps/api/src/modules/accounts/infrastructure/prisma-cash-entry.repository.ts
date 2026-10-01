@@ -126,8 +126,15 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
   }
 
   async book(query: CashBookQuery): Promise<CashBook> {
-    const from = startOfDay(new Date(query.from));
-    const to = endOfDay(new Date(query.to));
+    // Date inputs are business dates. Parsing YYYY-MM-DD with `new Date` treats it as
+    // UTC and can move the selected day in India. Pin date-only values to IST so Today
+    // always covers midnight through 23:59:59 in the user's calendar.
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(query.from)
+      ? new Date(`${query.from}T00:00:00.000+05:30`)
+      : startOfDay(new Date(query.from));
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(query.to)
+      ? new Date(`${query.to}T23:59:59.999+05:30`)
+      : endOfDay(new Date(query.to));
     if (from > to) throw new ValidationError('The period ends before it starts');
 
     const account = await this.prisma.ledgerAccount.findFirst({
@@ -307,10 +314,21 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
       throw new ValidationError('Only an expense is booked under a head');
     }
 
-    const created = await this.prisma.$transaction((tx) =>
-      this.posting.post(
-        tx,
-        {
+    if (input.customerId && input.type !== 'PAYMENT') {
+      throw new ValidationError('A customer refund must be posted as a payment');
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const customer = input.customerId
+        ? await tx.customer.findFirst({
+            where: { id: input.customerId, deletedAt: null },
+            select: { id: true, name: true, isActive: true },
+          })
+        : null;
+      if (input.customerId && !customer) throw new ValidationError('Customer not found');
+      if (customer && !customer.isActive) throw new ValidationError('Customer is inactive');
+
+      return this.posting.post(tx, {
           accountId: input.accountId,
           entryDate: input.entryDate ? new Date(input.entryDate) : undefined,
           type: input.type,
@@ -318,12 +336,13 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
           direction: input.type === 'RECEIPT' ? 'IN' : 'OUT',
           amount: input.amount,
           expenseHeadId: input.expenseHeadId ?? null,
+          refType: customer ? 'CUSTOMER_REFUND' : undefined,
+          refId: customer?.id,
+          refNumber: customer?.name,
           referenceNo: input.referenceNo,
           narration: input.narration,
-        },
-        actorId,
-      ),
-    );
+        }, actorId);
+    });
 
     return this.byId(created.id);
   }
@@ -381,7 +400,7 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
     return this.byId(contra.id);
   }
 
-  async owners(from: ISODateString, to: ISODateString): Promise<OwnerSummary> {
+  async owners(from: ISODateString, to: ISODateString, branchId?: UUID): Promise<OwnerSummary> {
     const start = startOfDay(new Date(from));
     const end = endOfDay(new Date(to));
 
@@ -402,10 +421,11 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
     const hidden = reversed.flatMap((row) => [row.id, row.reversalEntryId as string]);
     const notCancelled = hidden.length > 0 ? { id: { notIn: hidden } } : {};
 
+    const branchScope = branchId ? { OR: [{ branchId }, { counterAccount: { branchId } }] } : {};
     const [before, during] = await Promise.all([
       this.prisma.cashEntry.groupBy({
         by: ['accountId', 'direction'],
-        where: { accountId: { in: ids }, entryDate: { lt: start }, ...notCancelled },
+        where: { accountId: { in: ids }, entryDate: { lt: start }, ...notCancelled, ...branchScope },
         _sum: { amount: true },
       }),
       this.prisma.cashEntry.groupBy({
@@ -414,6 +434,7 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
           accountId: { in: ids },
           entryDate: { gte: start, lte: end },
           ...notCancelled,
+          ...branchScope,
         },
         _sum: { amount: true },
       }),
@@ -429,7 +450,7 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
 
     const rows: OwnerSummaryRow[] = accounts.map((account) => {
       const openingBalance = round2(
-        Number(account.openingBalance) +
+        (branchId ? 0 : Number(account.openingBalance)) +
           pick(before, account.id, 'IN') -
           pick(before, account.id, 'OUT'),
       );
@@ -464,6 +485,7 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
     from: ISODateString,
     to: ISODateString,
     includeReversed = false,
+    branchId?: UUID,
   ): Promise<OwnerStatement> {
     const book = await this.book({ accountId, from, to, includeReversed });
 
@@ -473,6 +495,22 @@ export class PrismaCashEntryRepository implements CashEntryRepository {
     });
     if (account?.type !== 'OWNER') {
       throw new ValidationError('That account is not an owner');
+    }
+
+    if (branchId) {
+      const branchAccounts = await this.prisma.ledgerAccount.findMany({
+        where: { branchId, deletedAt: null },
+        select: { id: true },
+      });
+      const allowed = new Set(branchAccounts.map((row) => row.id));
+      book.entries = book.entries.filter((entry) => Boolean(entry.counterAccountId && allowed.has(entry.counterAccountId)));
+      let balance = 0;
+      for (const entry of book.entries) {
+        balance = round2(balance + entry.amount * (entry.direction === 'IN' ? 1 : -1));
+        entry.balance = balance;
+      }
+      book.openingBalance = 0;
+      book.closingBalance = balance;
     }
 
     // Where each rupee came from, over whatever the book decided to show. With reversals

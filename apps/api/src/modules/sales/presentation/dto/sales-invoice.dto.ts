@@ -22,6 +22,102 @@ import { PaginationQueryDto } from '../../../../core/http/dto/pagination-query.d
 
 const STATUSES: SalesInvoiceStatus[] = ['DRAFT', 'POSTED', 'CANCELLED'];
 
+export class SalesReturnLineDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID('4')
+  salesInvoiceLineId!: string;
+
+  @ApiProperty({ minimum: 0 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  boxes!: number;
+
+  @ApiProperty({ minimum: 0 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  pieces!: number;
+}
+
+export class CreateSalesReturnDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(500)
+  reason!: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @MaxLength(1000)
+  @IsOptional()
+  remarks?: string;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  @IsDateString()
+  @IsOptional()
+  returnDate?: string;
+
+  @ApiProperty({ type: [SalesReturnLineDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => SalesReturnLineDto)
+  lines!: SalesReturnLineDto[];
+}
+
+export class SalesReturnListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  customerId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  branchId?: string;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  toDate?: string;
+}
+
+export class RefundSalesReturnDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID('4')
+  accountId!: string;
+
+  @ApiProperty({ minimum: 0.01 })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount!: number;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  @IsDateString()
+  @IsOptional()
+  refundDate?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @MaxLength(100)
+  @IsOptional()
+  referenceNo?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  remarks?: string;
+}
+
 export class SalesInvoiceLineDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID('4')
@@ -78,7 +174,7 @@ export class SalesInvoiceLineDto {
 
   @ApiProperty({ description: "Blank uses the order's agreed rate" })
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsNumber({ maxDecimalPlaces: 8 })
   @Min(0)
   rate!: number;
 
@@ -275,6 +371,16 @@ export class CancelSalesInvoiceDto extends InvoiceVersionDto {
 }
 
 export class SalesInvoiceListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  toDate?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsUUID('4')
   @IsOptional()

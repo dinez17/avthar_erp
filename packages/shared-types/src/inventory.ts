@@ -82,6 +82,27 @@ export interface StockBalanceItem {
   gstRate: number;
 }
 
+/** Product availability across the purchasing, transfer and sales-reservation pipeline. */
+export interface StockCheckItem {
+  productId: UUID;
+  sku: string;
+  productName: string;
+  brandName: string;
+  sizeMm: string | null;
+  piecesPerBox: number;
+  baseUom: ProductUom;
+  branchId: UUID;
+  branchName: string;
+  currentQtyBoxes: number;
+  /** Pending quantity on draft purchase orders. */
+  poQtyBoxes: number;
+  /** Pending approved PO quantity plus stock transfers currently in transit. */
+  inTransitQtyBoxes: number;
+  holdQtyBoxes: number;
+  availableQtyBoxes: number;
+  expectedQtyBoxes: number;
+}
+
 /** One line of an opening-stock or adjustment posting. */
 export interface StockEntryLine {
   productId: UUID;

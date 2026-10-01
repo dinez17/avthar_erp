@@ -19,7 +19,8 @@ import type {
 const include = {
   supplier: { select: { name: true } },
   branch: { select: { name: true } },
-  receipt: { select: { grnNumber: true } },
+  receipt: { select: { grnNumber: true, godownId: true } },
+  godown: { select: { name: true } },
   lines: {
     include: {
       product: { select: { sku: true, name: true, piecesPerBox: true, baseUom: true } },
@@ -39,6 +40,8 @@ const toItem = (row: Row, withLines: boolean): PurchaseInvoiceItem => ({
   supplierName: row.supplier.name,
   branchId: row.branchId,
   branchName: row.branch.name,
+  godownId: row.godownId,
+  godownName: row.godown?.name ?? null,
   receiptId: row.receiptId,
   grnNumber: row.receipt?.grnNumber ?? null,
   invoiceDate: row.invoiceDate.toISOString(),
@@ -135,6 +138,7 @@ export class PrismaPurchaseInvoiceRepository implements PurchaseInvoiceRepositor
         supplierInvoiceNo: data.supplierInvoiceNo,
         supplierId: data.supplierId,
         branchId: data.branchId,
+        godownId: data.godownId,
         receiptId: data.receiptId,
         invoiceDate: data.invoiceDate,
         dueDate: data.dueDate,
@@ -182,6 +186,7 @@ export class PrismaPurchaseInvoiceRepository implements PurchaseInvoiceRepositor
           supplierInvoiceNo: data.supplierInvoiceNo,
           supplierId: data.supplierId,
           branchId: data.branchId,
+          godownId: data.godownId,
           receiptId: data.receiptId,
           invoiceDate: data.invoiceDate,
           dueDate: data.dueDate,
@@ -234,6 +239,27 @@ export class PrismaPurchaseInvoiceRepository implements PurchaseInvoiceRepositor
       if (invoice.status === 'POSTED') throw new ValidationError('Invoice is already posted');
       if (invoice.status === 'CANCELLED') throw new ValidationError('Invoice is cancelled');
 
+      // A GRN has already received its stock. A direct invoice has no GRN, so posting
+      // the bill is also the physical receipt and must identify the receiving godown.
+      const receivingGodownId = invoice.receiptId
+        ? invoice.receipt?.godownId ?? null
+        : invoice.godownId;
+      if (!invoice.receiptId && !receivingGodownId) {
+        throw new ValidationError('Choose the godown receiving stock before posting');
+      }
+      if (receivingGodownId) {
+        const godown = await tx.godown.findFirst({
+          where: {
+            id: receivingGodownId,
+            branchId: invoice.branchId,
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!godown) throw new ValidationError('The receiving godown is not active in this branch');
+      }
+
       const updated = await tx.purchaseInvoice.updateMany({
         where: { id, version },
         data: {
@@ -280,6 +306,55 @@ export class PrismaPurchaseInvoiceRepository implements PurchaseInvoiceRepositor
           where: { id: line.productId },
           data: { purchaseRate: netRate, landingCost, updatedBy: actorId },
         });
+
+        if (!invoice.receiptId && receivingGodownId) {
+          await tx.stockMovement.create({
+            data: {
+              productId: line.productId,
+              branchId: invoice.branchId,
+              godownId: receivingGodownId,
+              type: 'PURCHASE',
+              direction: 'IN',
+              qtyBoxes,
+              refType: 'PURCHASE_INVOICE',
+              refId: invoice.id,
+              refNumber: invoice.invoiceNumber,
+              remarks: invoice.remarks,
+              movementDate: invoice.invoiceDate,
+              createdBy: actorId,
+            },
+          });
+
+          const balance = await tx.stockBalance.findFirst({
+            where: {
+              productId: line.productId,
+              branchId: invoice.branchId,
+              godownId: receivingGodownId,
+              gateId: null,
+              batchNo: null,
+              shade: null,
+            },
+            select: { id: true },
+          });
+          if (balance) {
+            await tx.stockBalance.update({
+              where: { id: balance.id },
+              data: { qtyBoxes: { increment: qtyBoxes } },
+            });
+          } else {
+            await tx.stockBalance.create({
+              data: {
+                productId: line.productId,
+                branchId: invoice.branchId,
+                godownId: receivingGodownId,
+                gateId: null,
+                batchNo: null,
+                shade: null,
+                qtyBoxes,
+              },
+            });
+          }
+        }
       }
 
       return tx.purchaseInvoice.findFirstOrThrow({ where: { id }, include });

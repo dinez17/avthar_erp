@@ -1,3 +1,5 @@
+import { SixOrbitStockSync } from './SixOrbitStockSync';
+import { SixOrbitStockExcelImport } from './SixOrbitStockExcelImport';
 import HistoryIcon from '@mui/icons-material/History';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -25,6 +27,7 @@ import { useProducts } from '../products/api';
 import { useBranches } from '../products/branch-prices-api';
 import { StockEntryDialog } from './StockEntryDialog';
 import { useGodowns, useStockBalances, useStockMovements } from './api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const MOVEMENT_COLORS: Record<string, 'success' | 'error' | 'info' | 'warning' | 'default'> = {
   OPENING: 'info',
@@ -42,7 +45,7 @@ export function StockPage(): JSX.Element {
   const movementPagination = usePagination({ initialPageSize: 50 });
 
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const godowns = useGodowns(branchId || undefined);
   const brands = useCatalogOptions('/brands');
   const [godownId, setGodownId] = useState('');
@@ -154,7 +157,9 @@ export function StockPage(): JSX.Element {
       title="Stock"
       subtitle="On-hand quantities and the movement ledger. Stock changes only by posting movements."
       actions={
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+          <SixOrbitStockSync />
+          <SixOrbitStockExcelImport />
           <Button
             variant="outlined"
             startIcon={<PlaylistAddIcon />}

@@ -1,7 +1,7 @@
 import type { ISODateString, UUID } from './common';
 
 /** Which of our records a sync attempt was about. */
-export type SixOrbitEntityType = 'CONNECTION' | 'MASTER' | 'CUSTOMER' | 'PRODUCT' | 'SALES_ORDER';
+export type SixOrbitEntityType = 'CONNECTION' | 'MASTER' | 'CUSTOMER' | 'PRODUCT' | 'SALES_ORDER' | 'SALES_INVOICE';
 
 /** Which way the data moved. */
 export type SixOrbitDirection = 'PUSH' | 'PULL';

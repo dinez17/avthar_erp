@@ -2,6 +2,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import {
   Alert,
+  Autocomplete,
   Button,
   IconButton,
   Chip,
@@ -251,21 +252,25 @@ export function ReceiptDialog({ open, onClose, onCreated }: ReceiptDialogProps):
           {error && <Alert severity="error">{error}</Alert>}
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-            <TextField
-              select
-              label="Customer *"
+            <Autocomplete
               size="small"
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              sx={{ flex: 2 }}
-            >
-              {(customers.data ?? []).map((customer) => (
-                <MenuItem key={customer.id} value={customer.id}>
-                  {customer.name}
-                  {customer.phone ? ` · ${customer.phone}` : ''}
-                </MenuItem>
-              ))}
-            </TextField>
+              options={customers.data ?? []}
+              value={(customers.data ?? []).find((customer) => customer.id === customerId) ?? null}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              getOptionLabel={(customer) =>
+                `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`
+              }
+              onChange={(_, customer) => setCustomerId(customer?.id ?? '')}
+              noOptionsText="No customer found"
+              sx={{ flex: 2, minWidth: 0 }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Customer *"
+                  placeholder="Search customer name or phone"
+                />
+              )}
+            />
             <TextField
               select
               label="Branch *"

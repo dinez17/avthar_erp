@@ -12,7 +12,7 @@ import {
   Typography,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageContainer } from '@tiles-erp/ui';
 import type { PayableRow } from '@tiles-erp/shared-types';
@@ -20,6 +20,7 @@ import { DataTable } from '../../components/DataTable';
 import { downloadCsv } from '../../lib/download';
 import { useBranches } from '../products/branch-prices-api';
 import { usePayables } from './supplier-payments-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -35,7 +36,7 @@ const rupees = (value: number): string => `₹${money(value)}`;
 export function PayablesPage(): JSX.Element {
   const navigate = useNavigate();
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const payables = usePayables(branchId || undefined);
 
   const rows = useMemo(() => payables.data ?? [], [payables.data]);

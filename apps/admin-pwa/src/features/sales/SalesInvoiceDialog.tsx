@@ -1,4 +1,4 @@
-import CallSplitIcon from '@mui/icons-material/CallSplit';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import {
   Alert,
   Button,
@@ -21,8 +21,7 @@ import { calculatePurchaseLine, formatBoxPieces } from '@tiles-erp/shared';
 import { useSaveShortcut } from '@tiles-erp/ui';
 import type { InvoiceableLine, SalesInvoiceLineInput, SalesOrderItem } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
-import { useCreateSalesInvoice, useInvoiceableLines } from './invoices-api';
-import { useSplitInvoices } from './orders-api';
+import { useCreateSalesInvoice, useInvoiceableLines, useTransferAndInvoice } from './invoices-api';
 
 interface SalesInvoiceDialogProps {
   open: boolean;
@@ -64,7 +63,7 @@ export function SalesInvoiceDialog({
 }: SalesInvoiceDialogProps): JSX.Element {
   const pending = useInvoiceableLines(open && order ? order.id : null);
   const createInvoice = useCreateSalesInvoice();
-  const split = useSplitInvoices();
+  const transferAndInvoice = useTransferAndInvoice();
 
   const [drafts, setDrafts] = useState<Record<string, DraftLine>>({});
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -188,6 +187,7 @@ export function SalesInvoiceDialog({
         shade: source.shade,
         boxes: Number(entry.draft?.boxes || 0),
         pieces: Number(entry.draft?.pieces || 0),
+        qtyBoxes: entry.qtyBoxes,
         rate: entry.line.rate,
         discountPct: entry.line.discountPct,
         gstRate: entry.line.gstRate,
@@ -203,6 +203,7 @@ export function SalesInvoiceDialog({
         freightCharge: order.freightCharge,
         unloadingCharge: order.unloadingCharge,
         loadingCharge: order.loadingCharge,
+        roundOff: order.roundOff,
         remarks: remarks.trim() || undefined,
         lines: payload,
       });
@@ -212,28 +213,16 @@ export function SalesInvoiceDialog({
     }
   };
 
-  /**
-   * Cuts one draft per supplying branch instead of one at this branch.
-   *
-   * Offered right here rather than only on the order, because this is where the problem
-   * is discovered: being told the goods are in another branch and then having to go and
-   * find the button is a worse answer than the button.
-   */
-  const raiseSplit = async (): Promise<void> => {
+  const raiseAfterTransfer = async (): Promise<void> => {
     if (!order) return;
     setError(null);
     try {
-      const result = await split.mutateAsync({ salesOrderId: order.id });
-      const raised = result.invoices
-        .map((invoice) => `${invoice.invoiceNumber} (${invoice.branchName})`)
-        .join(', ');
-      onCreated(
-        result.invoices.length === 1
-          ? `${raised} drafted. Post it to take the stock out.`
-          : `${result.invoices.length} drafts raised: ${raised}.`,
-      );
+      const result = await transferAndInvoice.mutateAsync(order.id);
+      onCreated(`${result.invoice.invoiceNumber} created as a ${order.branchName} draft${
+        result.transferDocuments.length ? ` after stock transfer ${result.transferDocuments.join(', ')}` : ''
+      }. Post it to issue the stock.`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The invoices could not be raised');
+      setError(err instanceof ApiError ? err.message : 'Stock transfer or invoice creation failed');
     }
   };
 
@@ -244,7 +233,11 @@ export function SalesInvoiceDialog({
       <DialogTitle>Invoice {order?.orderNumber}</DialogTitle>
       <DialogContent>
         <Stack spacing={1.5} sx={{ pt: 1 }}>
-          {error && <Alert severity="error">{error}</Alert>}
+          {error && (
+            <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>
+              {error}
+            </Alert>
+          )}
 
           {otherBranches.length > 0 && (
             <Alert severity={nothingHere ? 'warning' : 'info'}>
@@ -252,15 +245,14 @@ export function SalesInvoiceDialog({
                 <>
                   Everything still pending on this order is held by{' '}
                   <strong>{otherBranches.join(', ')}</strong>, and {order?.branchName} cannot
-                  invoice another branch&rsquo;s stock. Use{' '}
-                  <strong>Raise invoices per branch</strong> below — it bills each supplying
-                  branch under its own GSTIN.
+                  invoice another branch&rsquo;s stock. Transfer it to {order?.branchName} and
+                  create the draft invoice there.
                 </>
               ) : (
                 <>
                   Part of this order is held by <strong>{otherBranches.join(', ')}</strong> and is
-                  not shown below. Bill just {order?.branchName}&rsquo;s share here, or use{' '}
-                  <strong>Raise invoices per branch</strong> to bill every branch at once.
+                  not shown below. Bill just {order?.branchName}&rsquo;s share here, or transfer
+                  the other stock and create the draft at {order?.branchName}.
                 </>
               )}
             </Alert>
@@ -399,11 +391,11 @@ export function SalesInvoiceDialog({
         {otherBranches.length > 0 && (
           <Button
             variant={nothingHere ? 'contained' : 'outlined'}
-            startIcon={<CallSplitIcon />}
-            onClick={() => void raiseSplit()}
-            disabled={split.isPending}
+            startIcon={<SwapHorizIcon />}
+            onClick={() => void raiseAfterTransfer()}
+            disabled={transferAndInvoice.isPending}
           >
-            {split.isPending ? 'Raising…' : 'Raise invoices per branch'}
+            {transferAndInvoice.isPending ? 'Transferring…' : 'Transfer stock & create draft invoice'}
           </Button>
         )}
         {!nothingHere && (

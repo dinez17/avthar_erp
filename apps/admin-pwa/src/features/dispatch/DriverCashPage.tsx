@@ -25,6 +25,7 @@ import { ApiError } from '../../lib/api-client';
 import { useBranches } from '../products/branch-prices-api';
 import { HandoverDialog } from './HandoverDialog';
 import { useDeleteHandover, useHandovers, useOutstandingDrivers } from './driver-cash-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -39,7 +40,7 @@ const money = (value: number): string =>
 export function DriverCashPage(): JSX.Element {
   const branches = useBranches();
   const pagination = usePagination();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [taking, setTaking] = useState<DriverDueSummary | null>(null);
   const [deleting, setDeleting] = useState<DriverCashHandoverItem | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

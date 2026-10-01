@@ -2,6 +2,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import {
   Alert,
+  Autocomplete,
   Button,
   Dialog,
   DialogActions,
@@ -21,18 +22,41 @@ import { useSaveShortcut } from '@tiles-erp/ui';
 import { ApiError } from '../../lib/api-client';
 import { useProducts } from '../products/api';
 import { useBranches } from '../products/branch-prices-api';
+import { useGodowns } from '../inventory/api';
 import { useGoodsReceipt, useGoodsReceipts, useSuppliers } from './api';
 import { useCreatePurchaseInvoice, useUpdatePurchaseInvoice } from './invoices-api';
 
 interface DraftLine {
   productId: string;
+  productLabel: string;
   qtyBoxes: string;
   rate: string;
+  /** Taxable line total entered on the supplier bill, excluding GST. */
+  totalAmount: string;
+  amountDriven: boolean;
   discountPct: string;
   gstRate: string;
 }
 
-const blankLine: DraftLine = { productId: '', qtyBoxes: '', rate: '', discountPct: '0', gstRate: '' };
+const blankLine: DraftLine = { productId: '', productLabel: '', qtyBoxes: '', rate: '', totalAmount: '', amountDriven: false, discountPct: '0', gstRate: '' };
+
+const totalFor = (line: Pick<DraftLine, 'qtyBoxes' | 'rate' | 'discountPct'>): string => {
+  const result = calculatePurchaseLine(
+    Number(line.qtyBoxes || 0),
+    Number(line.rate || 0),
+    Number(line.discountPct || 0),
+    0,
+  ).lineSubTotal;
+  return result > 0 ? result.toFixed(2) : '';
+};
+
+const rateFromTotal = (total: string, line: DraftLine): string => {
+  const qty = Number(line.qtyBoxes || 0);
+  const amount = Number(total || 0);
+  const discountFactor = 1 - Number(line.discountPct || 0) / 100;
+  if (qty <= 0 || amount < 0 || discountFactor <= 0) return line.rate;
+  return String(Math.round((amount / qty / discountFactor) * 1_000_000) / 1_000_000);
+};
 
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -57,12 +81,17 @@ export function PurchaseInvoiceDialog({
 }: PurchaseInvoiceDialogProps): JSX.Element {
   const suppliers = useSuppliers();
   const branches = useBranches();
-  const products = useProducts({ page: 1, pageSize: 200, sortOrder: 'asc' }, {});
+  const [productSearch, setProductSearch] = useState('');
+  const products = useProducts(
+    { page: 1, pageSize: 50, sortOrder: 'asc', search: productSearch || undefined },
+    {},
+  );
   const createInvoice = useCreatePurchaseInvoice();
   const updateInvoice = useUpdatePurchaseInvoice();
 
   const [supplierId, setSupplierId] = useState('');
   const [branchId, setBranchId] = useState('');
+  const [godownId, setGodownId] = useState('');
   const [receiptId, setReceiptId] = useState('');
   const [supplierInvoiceNo, setSupplierInvoiceNo] = useState('');
   const [transportCharge, setTransportCharge] = useState('0');
@@ -79,6 +108,7 @@ export function PurchaseInvoiceDialog({
     true,
   );
   const receipt = useGoodsReceipt(receiptId || null);
+  const godowns = useGodowns(branchId || undefined);
 
   useEffect(() => {
     if (!open) return;
@@ -86,6 +116,7 @@ export function PurchaseInvoiceDialog({
     if (editing) {
       setSupplierId(editing.supplierId);
       setBranchId(editing.branchId);
+      setGodownId(editing.godownId ?? '');
       setReceiptId(editing.receiptId ?? '');
       setSupplierInvoiceNo(editing.supplierInvoiceNo);
       setTransportCharge(String(editing.transportCharge));
@@ -94,8 +125,11 @@ export function PurchaseInvoiceDialog({
       setLines(
         (editing.lines ?? []).map((line) => ({
           productId: line.productId,
+          productLabel: `${line.sku} · ${line.productName}`,
           qtyBoxes: String(line.qtyBoxes),
           rate: String(line.rate),
+          totalAmount: String(line.lineSubTotal),
+          amountDriven: false,
           discountPct: String(line.discountPct),
           gstRate: String(line.gstRate),
         })),
@@ -104,6 +138,7 @@ export function PurchaseInvoiceDialog({
     }
     setSupplierId('');
     setBranchId('');
+    setGodownId('');
     setReceiptId('');
     setSupplierInvoiceNo('');
     setTransportCharge('0');
@@ -123,12 +158,21 @@ export function PurchaseInvoiceDialog({
     if (!receipt.data?.lines) return;
     setSupplierId(receipt.data.supplierId);
     setBranchId(receipt.data.branchId);
+    setGodownId(receipt.data.godownId);
     if (receipt.data.supplierInvoiceNo) setSupplierInvoiceNo(receipt.data.supplierInvoiceNo);
     setLines(
       receipt.data.lines.map((line) => ({
         productId: line.productId,
+        productLabel: `${line.sku} · ${line.productName}`,
         qtyBoxes: String(line.qtyBoxes),
         rate: String(line.rate),
+        totalAmount: calculatePurchaseLine(
+          Number(line.qtyBoxes),
+          Number(line.rate),
+          0,
+          Number(productById.get(line.productId)?.gstRate ?? 0),
+        ).lineSubTotal.toFixed(2),
+        amountDriven: false,
         discountPct: '0',
         gstRate: String(productById.get(line.productId)?.gstRate ?? ''),
       })),
@@ -143,6 +187,7 @@ export function PurchaseInvoiceDialog({
     return { qty, ...calculatePurchaseLine(qty, rate, discount, gst) };
   });
   const totals = sumPurchaseTotals(computed);
+  const totalBoxes = computed.reduce((sum, line) => sum + line.qty, 0);
   const charges = Number(transportCharge || 0) + Number(additionalCharge || 0);
   const shares = apportionCharge(
     computed.map((c) => c.lineSubTotal),
@@ -156,6 +201,10 @@ export function PurchaseInvoiceDialog({
     setError(null);
     if (!supplierId || !branchId) {
       setError('Choose a supplier and branch');
+      return;
+    }
+    if (!receiptId && !godownId) {
+      setError('Choose the godown receiving this stock');
       return;
     }
     if (!supplierInvoiceNo.trim()) {
@@ -189,6 +238,7 @@ export function PurchaseInvoiceDialog({
         supplierInvoiceNo: supplierInvoiceNo.trim(),
         supplierId,
         branchId,
+        godownId: godownId || null,
         receiptId: receiptId || null,
         transportCharge: Number(transportCharge || 0),
         additionalCharge: Number(additionalCharge || 0),
@@ -215,31 +265,32 @@ export function PurchaseInvoiceDialog({
           {error && <Alert severity="error">{error}</Alert>}
 
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            <TextField
-              select
-              label="Supplier *"
+            <Autocomplete
               size="small"
-              fullWidth={false}
-              value={supplierId}
-              onChange={(e) => {
-                setSupplierId(e.target.value);
+              options={suppliers.data ?? []}
+              getOptionLabel={(supplier) => `${supplier.name}${supplier.phone ? ` · ${supplier.phone}` : ''}`}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              value={(suppliers.data ?? []).find((supplier) => supplier.id === supplierId) ?? null}
+              onChange={(_, supplier) => {
+                setSupplierId(supplier?.id ?? '');
                 setReceiptId('');
               }}
-              sx={{ width: 220 }}
-            >
-              {(suppliers.data ?? []).map((s) => (
-                <MenuItem key={s.id} value={s.id}>
-                  {s.name}
-                </MenuItem>
-              ))}
-            </TextField>
+              sx={{ width: { xs: '100%', sm: 300 } }}
+              renderInput={(params) => (
+                <TextField {...params} label="Supplier *" placeholder="Search supplier name or phone" />
+              )}
+            />
             <TextField
               select
               label="Branch *"
               size="small"
               fullWidth={false}
               value={branchId}
-              onChange={(e) => setBranchId(e.target.value)}
+              onChange={(e) => {
+                setBranchId(e.target.value);
+                setGodownId('');
+                setReceiptId('');
+              }}
               sx={{ width: 180 }}
             >
               {(branches.data ?? []).map((b) => (
@@ -250,11 +301,31 @@ export function PurchaseInvoiceDialog({
             </TextField>
             <TextField
               select
+              label="Receiving godown *"
+              size="small"
+              fullWidth={false}
+              value={godownId}
+              onChange={(e) => setGodownId(e.target.value)}
+              disabled={!branchId || Boolean(receiptId)}
+              sx={{ width: 220 }}
+              helperText={receiptId ? 'Taken from the selected GRN' : 'Stock is added here when posted'}
+            >
+              {(godowns.data ?? []).map((godown) => (
+                <MenuItem key={godown.id} value={godown.id}>
+                  {godown.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
               label="Against GRN"
               size="small"
               fullWidth={false}
               value={receiptId}
-              onChange={(e) => setReceiptId(e.target.value)}
+              onChange={(e) => {
+                setReceiptId(e.target.value);
+                if (!e.target.value) setGodownId('');
+              }}
               sx={{ width: 220 }}
               error={receipts.isError}
               helperText={
@@ -301,34 +372,54 @@ export function PurchaseInvoiceDialog({
 
           {lines.map((line, index) => (
             <Stack key={index} direction="row" spacing={1} alignItems="center">
-              <TextField
-                select
-                label="Product"
+              <Autocomplete
                 size="small"
-                fullWidth={false}
-                value={line.productId}
-                onChange={(e) => {
-                  const product = productById.get(e.target.value);
-                  setLine(index, {
-                    productId: e.target.value,
-                    gstRate: product ? String(product.gstRate) : '',
-                  });
+                options={products.data?.items ?? []}
+                filterOptions={(options) => options}
+                loading={products.isFetching}
+                getOptionLabel={(product) => `${product.sku} · ${product.name}`}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                value={productById.get(line.productId) ?? null}
+                inputValue={line.productLabel}
+                onInputChange={(_, value, reason) => {
+                  if (reason === 'input') {
+                    setLine(index, { productLabel: value });
+                    setProductSearch(value);
+                  }
                 }}
-                sx={{ width: 280 }}
-              >
-                {(products.data?.items ?? []).map((product) => (
-                  <MenuItem key={product.id} value={product.id}>
-                    {product.sku} — {product.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+                onChange={(_, product) => {
+                  const nextRate = line.rate || (product?.purchaseRate ? String(product.purchaseRate) : '');
+                  const nextGst = product ? String(product.gstRate) : '';
+                  setLine(index, {
+                    productId: product?.id ?? '',
+                    productLabel: product ? `${product.sku} · ${product.name}` : '',
+                    gstRate: nextGst,
+                    rate: nextRate,
+                    totalAmount: totalFor({ ...line, rate: nextRate }),
+                    amountDriven: false,
+                  });
+                  if (product && index === lines.length - 1) {
+                    setLines((previous) => [...previous, { ...blankLine }]);
+                  }
+                }}
+                sx={{ width: 420, minWidth: 360 }}
+                renderInput={(params) => (
+                  <TextField {...params} label="Product" placeholder="Search SKU or product name" />
+                )}
+              />
               <TextField
                 label="Boxes"
                 type="number"
                 size="small"
                 fullWidth={false}
                 value={line.qtyBoxes}
-                onChange={(e) => setLine(index, { qtyBoxes: e.target.value })}
+                onChange={(e) => {
+                  const qtyBoxes = e.target.value;
+                  const next = { ...line, qtyBoxes };
+                  setLine(index, line.amountDriven
+                    ? { qtyBoxes, rate: rateFromTotal(line.totalAmount, next) }
+                    : { qtyBoxes, totalAmount: totalFor(next) });
+                }}
                 sx={{ width: 95 }}
               />
               <TextField
@@ -337,8 +428,24 @@ export function PurchaseInvoiceDialog({
                 size="small"
                 fullWidth={false}
                 value={line.rate}
-                onChange={(e) => setLine(index, { rate: e.target.value })}
+                onChange={(e) => {
+                  const rate = e.target.value;
+                  setLine(index, { rate, totalAmount: totalFor({ ...line, rate }), amountDriven: false });
+                }}
                 sx={{ width: 105 }}
+              />
+              <TextField
+                label="Total excl GST ₹"
+                type="number"
+                size="small"
+                fullWidth={false}
+                value={line.totalAmount}
+                onChange={(e) => {
+                  const totalAmount = e.target.value;
+                  setLine(index, { totalAmount, rate: rateFromTotal(totalAmount, line), amountDriven: true });
+                }}
+                helperText="Calculates rate"
+                sx={{ width: 135 }}
               />
               <TextField
                 label="Disc %"
@@ -346,7 +453,13 @@ export function PurchaseInvoiceDialog({
                 size="small"
                 fullWidth={false}
                 value={line.discountPct}
-                onChange={(e) => setLine(index, { discountPct: e.target.value })}
+                onChange={(e) => {
+                  const discountPct = e.target.value;
+                  const next = { ...line, discountPct };
+                  setLine(index, line.amountDriven
+                    ? { discountPct, rate: rateFromTotal(line.totalAmount, next) }
+                    : { discountPct, totalAmount: totalFor(next) });
+                }}
                 sx={{ width: 85 }}
               />
               <TextField
@@ -355,7 +468,10 @@ export function PurchaseInvoiceDialog({
                 size="small"
                 fullWidth={false}
                 value={line.gstRate}
-                onChange={(e) => setLine(index, { gstRate: e.target.value })}
+                onChange={(e) => {
+                  const gstRate = e.target.value;
+                  setLine(index, { gstRate });
+                }}
                 sx={{ width: 85 }}
               />
               <Typography variant="caption" sx={{ width: 120, textAlign: 'right' }}>
@@ -380,7 +496,7 @@ export function PurchaseInvoiceDialog({
 
           <Button
             startIcon={<AddIcon />}
-            onClick={() => setLines((prev) => [...prev, blankLine])}
+            onClick={() => setLines((prev) => [...prev, { ...blankLine }])}
             sx={{ alignSelf: 'flex-start' }}
           >
             Add line
@@ -407,6 +523,9 @@ export function PurchaseInvoiceDialog({
               sx={{ width: 150 }}
             />
             <Stack direction="row" spacing={3} sx={{ ml: 'auto' }}>
+              <Typography variant="body2" fontWeight={700}>
+                Total boxes: {totalBoxes.toLocaleString('en-IN', { maximumFractionDigits: 3 })}
+              </Typography>
               <Typography variant="body2">Sub total: {money(totals.subTotal)}</Typography>
               <Typography variant="body2">GST: {money(totals.gstAmount)}</Typography>
               <Typography variant="subtitle2">Total: {money(totals.grandTotal)}</Typography>

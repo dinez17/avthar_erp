@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiOperation, ApiPropertyOptional, ApiTags } from '@nest
 import { IsDateString, IsOptional, IsUUID } from 'class-validator';
 import { PERMISSIONS } from '@tiles-erp/config';
 import type {
+  DispatchedProductReport,
   DriverCashReport,
   FreightCollectionReport,
   PendingDispatchAgeReport,
@@ -12,6 +13,7 @@ import type {
 import { RequirePermissions } from '../../auth/decorators/permissions.decorator';
 import { RequireBranchScope } from '../../auth/decorators/scope.decorator';
 import {
+  DispatchedProductsQuery,
   DriverCashQuery,
   FreightCollectionQuery,
   PendingAgeingQuery,
@@ -35,11 +37,28 @@ export class DispatchReportQueryDto {
   branchId?: string;
 }
 
+export class DispatchedProductsQueryDto {
+  @IsDateString()
+  date!: string;
+
+  @IsUUID('4')
+  @IsOptional()
+  branchId?: string;
+}
+
 @ApiTags('Dispatch')
 @ApiBearerAuth()
 @Controller('dispatch-reports')
 export class DispatchReportController {
   constructor(private readonly queryBus: QueryBus) {}
+
+  @Get('dispatched-products')
+  @RequirePermissions(PERMISSIONS.DISPATCH_REPORT_READ)
+  @RequireBranchScope({ in: 'query' })
+  @ApiOperation({ summary: 'Product-wise posted invoice items for one business date' })
+  dispatchedProducts(@Query() query: DispatchedProductsQueryDto): Promise<DispatchedProductReport> {
+    return this.queryBus.execute(new DispatchedProductsQuery(query.date, query.branchId));
+  }
 
   @Get('freight-collection')
   @RequirePermissions(PERMISSIONS.DISPATCH_REPORT_READ)

@@ -141,6 +141,9 @@ async function buildInvoiceData(
   if (data.lines.length > MAX_LINES) {
     throw new ValidationError(`At most ${MAX_LINES} lines per invoice`);
   }
+  if (!data.receiptId && !data.godownId) {
+    throw new ValidationError('Choose the godown receiving stock for a direct invoice');
+  }
 
   await orders.assertReferences(data.supplierId, data.branchId);
 
@@ -225,6 +228,7 @@ async function buildInvoiceData(
     supplierInvoiceNo,
     supplierId: data.supplierId,
     branchId: data.branchId,
+    godownId: data.godownId ?? null,
     receiptId: data.receiptId ?? null,
     invoiceDate,
     dueDate,
@@ -273,6 +277,7 @@ export class UpdatePurchaseInvoiceHandler
       supplierInvoiceNo: command.data.supplierInvoiceNo ?? existing.supplierInvoiceNo,
       supplierId: command.data.supplierId ?? existing.supplierId,
       branchId: command.data.branchId ?? existing.branchId,
+      godownId: command.data.godownId ?? existing.godownId,
       receiptId: command.data.receiptId ?? existing.receiptId,
       invoiceDate: command.data.invoiceDate ?? existing.invoiceDate,
       dueDate: command.data.dueDate ?? existing.dueDate ?? undefined,

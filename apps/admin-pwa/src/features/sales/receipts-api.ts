@@ -17,6 +17,8 @@ import { apiFetch } from '../../lib/api-client';
 const KEY = 'receipts';
 
 export interface ReceiptFilters {
+  fromDate?: string;
+  toDate?: string;
   customerId?: string;
   branchId?: string;
   status?: ReceiptStatus;

@@ -67,6 +67,7 @@ const mockRepo = (): jest.Mocked<SalesInvoiceRepository> => ({
   printData: jest.fn(),
   billingParties: jest.fn().mockResolvedValue(parties),
   salesmanName: jest.fn().mockResolvedValue('Arun Kumar'),
+  orderSalesman: jest.fn().mockResolvedValue({ userId: 'sales-1', name: 'Original Salesman' }),
   invoiceableLines: jest.fn().mockResolvedValue([orderLine]),
   assertGodownsInBranch: jest.fn().mockResolvedValue(undefined),
 });
@@ -88,6 +89,25 @@ const line = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('CreateSalesInvoiceHandler', () => {
+  it('keeps the sales order salesperson instead of the billing user', async () => {
+    const repo = mockRepo();
+    await new CreateSalesInvoiceHandler(repo).execute(
+      new CreateSalesInvoiceCommand({ ...base, lines: [line()] }, 'billing-1', ALL_RIGHTS),
+    );
+    const [, data] = repo.create.mock.calls[0]!;
+    expect(data).toMatchObject({ salesmanUserId: 'sales-1', salesmanName: 'Original Salesman' });
+    expect(repo.salesmanName).not.toHaveBeenCalled();
+  });
+
+  it('credits the billing user on a counter invoice without an order', async () => {
+    const repo = mockRepo();
+    await new CreateSalesInvoiceHandler(repo).execute(
+      new CreateSalesInvoiceCommand({ ...base, salesOrderId: undefined, lines: [line({ salesOrderLineId: undefined })] }, 'billing-1', ALL_RIGHTS),
+    );
+    const [, data] = repo.create.mock.calls[0]!;
+    expect(data).toMatchObject({ salesmanUserId: 'billing-1', salesmanName: 'Arun Kumar' });
+  });
+
   it('halves the tax into CGST and SGST for a customer in the same state', async () => {
     const repo = mockRepo();
     const handler = new CreateSalesInvoiceHandler(repo);

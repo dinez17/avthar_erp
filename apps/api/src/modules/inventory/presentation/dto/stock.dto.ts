@@ -82,6 +82,12 @@ export class StockBalanceQueryDto extends PaginationQueryDto {
   groupByProduct?: boolean;
 }
 
+export class StockCheckQueryDto extends PaginationQueryDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID('4')
+  branchId!: string;
+}
+
 export class StockMovementQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsUUID('4')

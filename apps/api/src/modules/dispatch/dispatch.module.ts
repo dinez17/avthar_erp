@@ -28,6 +28,7 @@ import {
   UpdateGatePassHandler,
 } from './application/gate-pass.handlers';
 import {
+  DispatchedProductsHandler,
   DriverCashHandler,
   FreightCollectionHandler,
   PendingAgeingHandler,
@@ -71,6 +72,7 @@ import {
     VehicleRunningHandler,
     DriverCashHandler,
     PendingAgeingHandler,
+    DispatchedProductsHandler,
     { provide: DRIVER_CASH_REPOSITORY, useClass: PrismaDriverCashRepository },
     ListHandoversHandler,
     GetHandoverHandler,

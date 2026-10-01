@@ -1,5 +1,6 @@
 import type {
   ExpenseHeadItem,
+  ExpenseHeadLedger,
   LedgerAccountItem,
   LedgerAccountType,
   SaveExpenseHeadInput,
@@ -31,7 +32,8 @@ export interface LedgerAccountRepository {
   softDelete(id: UUID, deletedBy: UUID): Promise<void>;
   nextCode(type: LedgerAccountType, branchId: UUID | null): Promise<string>;
 
-  listExpenseHeads(includeInactive: boolean): Promise<ExpenseHeadItem[]>;
+  listExpenseHeads(includeInactive: boolean, branchId?: UUID): Promise<ExpenseHeadItem[]>;
+  expenseHeadLedger(id: UUID, from: Date, to: Date, branchId?: UUID): Promise<ExpenseHeadLedger>;
   createExpenseHead(data: SaveExpenseHeadInput, createdBy: UUID): Promise<ExpenseHeadItem>;
   updateExpenseHead(
     id: UUID,

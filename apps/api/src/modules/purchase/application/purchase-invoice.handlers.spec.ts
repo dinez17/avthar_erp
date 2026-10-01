@@ -36,7 +36,7 @@ const orderRepo = (): jest.Mocked<PurchaseOrderRepository> => ({
   ),
 });
 
-const base = { supplierInvoiceNo: 'INV-8842', supplierId: 's1', branchId: 'b1' };
+const base = { supplierInvoiceNo: 'INV-8842', supplierId: 's1', branchId: 'b1', godownId: 'g1' };
 
 describe('apportionCharge', () => {
   it('splits a charge in proportion to line value', () => {
@@ -49,6 +49,18 @@ describe('apportionCharge', () => {
 });
 
 describe('CreatePurchaseInvoiceHandler', () => {
+  it('requires a receiving godown when entered without a GRN', async () => {
+    const handler = new CreatePurchaseInvoiceHandler(invoiceRepo(), orderRepo());
+    await expect(
+      handler.execute(
+        new CreatePurchaseInvoiceCommand(
+          { ...base, godownId: null, lines: [{ productId: 'p1', qtyBoxes: 1, rate: 10 }] },
+          'actor',
+        ),
+      ),
+    ).rejects.toThrow(/godown receiving stock/);
+  });
+
   it('folds apportioned charges into each line landing cost', async () => {
     const invoices = invoiceRepo();
     const handler = new CreatePurchaseInvoiceHandler(invoices, orderRepo());

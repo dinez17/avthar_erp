@@ -8,6 +8,7 @@ import type {
   PostAdjustmentInput,
   PostOpeningStockInput,
   StockBalanceItem,
+  StockCheckItem,
   StockMovementItem,
 } from '@tiles-erp/shared-types';
 import { apiFetch } from '../../lib/api-client';
@@ -23,6 +24,9 @@ export interface StockFilters {
   shade?: string;
   /** Merge batch/shade rows into one line per product and godown. */
   groupByProduct?: string;
+  productId?: string;
+  fromDate?: string;
+  toDate?: string;
 }
 
 const withFilters = (params: URLSearchParams, filters: StockFilters): URLSearchParams => {
@@ -43,6 +47,29 @@ export function useStockBalances(query: PaginationQuery, filters: StockFilters, 
     queryFn: () => apiFetch<Paginated<StockBalanceItem>>(`/stock/balances?${params.toString()}`),
     enabled,
     placeholderData: (previous) => previous,
+  });
+}
+
+export function useStockCheck(query: PaginationQuery, branchId: string, enabled: boolean) {
+  const params = new URLSearchParams({
+    page: String(query.page),
+    pageSize: String(query.pageSize),
+    branchId,
+  });
+  if (query.search) params.set('search', query.search);
+  return useQuery({
+    queryKey: [KEY, 'check', query, branchId],
+    queryFn: () => apiFetch<Paginated<StockCheckItem>>(`/stock/check?${params.toString()}`),
+    enabled,
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useProductStockCheck(productId: string) {
+  return useQuery({
+    queryKey: [KEY, 'product-check', productId],
+    queryFn: () => apiFetch<StockCheckItem[]>(`/stock/check/product/${productId}`),
+    enabled: Boolean(productId),
   });
 }
 

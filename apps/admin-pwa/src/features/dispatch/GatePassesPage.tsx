@@ -43,6 +43,7 @@ import {
   useReturnGatePass,
   useSetGatePassLoaded,
 } from './gate-pass-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<
   GatePassStatus,
@@ -94,7 +95,7 @@ export function GatePassesPage(): JSX.Element {
   const navigate = useNavigate();
   const pagination = usePagination();
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [type, setType] = useState<GatePassType | ''>('');
   const [status, setStatus] = useState<GatePassStatus | ''>('');
 

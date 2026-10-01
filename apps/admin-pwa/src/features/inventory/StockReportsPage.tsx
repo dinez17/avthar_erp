@@ -1,4 +1,5 @@
 import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   Button,
   Card,
@@ -34,11 +35,12 @@ import type {
   StockValuationItem,
 } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
+import { downloadTableExcel, downloadTablePdf, type ExportColumn } from '../../components/ListExportButtons';
 import { useCatalogOptions } from '../catalog/api';
 import { useBranches } from '../products/branch-prices-api';
 import { useGodowns } from './api';
-import { exportCsv } from './exportCsv';
 import { useAgeingReport, useLowStockReport, useValuationReport } from './reports-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const currency = (value: number | null): string =>
   value === null ? '—' : `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -64,7 +66,7 @@ export function StockReportsPage(): JSX.Element {
 
   const branches = useBranches();
   const brands = useCatalogOptions('/brands');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [godownId, setGodownId] = useState('');
   const [brandId, setBrandId] = useState('');
   const [groupByProduct, setGroupByProduct] = useState(true);
@@ -199,60 +201,33 @@ export function StockReportsPage(): JSX.Element {
     [],
   );
 
-  const download = (): void => {
+  type ExportRow = StockValuationItem | StockAgeingItem | LowStockItem;
+  const exportData = (): { name: string; title: string; columns: ExportColumn<ExportRow>[]; rows: ExportRow[] } => {
     if (tab === 0) {
-      exportCsv<StockValuationItem>(
-        'stock-valuation',
-        [
-          { header: 'SKU', field: 'sku' },
-          { header: 'Product', field: 'productName' },
-          { header: 'Brand', field: 'brandName' },
-          { header: 'Category', field: 'categoryName' },
-          { header: 'Branch', field: 'branchName' },
-          { header: 'Godown', field: 'godownName' },
-          { header: 'Quantity', field: (row) => qtyLabel(row) },
-          { header: 'Boxes', field: 'qtyBoxes' },
-          { header: 'Landing cost', field: 'landingCost' },
-          { header: 'Value', field: 'value' },
-        ],
-        valuation.data?.items ?? [],
-      );
-      return;
+      return { name: 'stock-valuation', title: 'Stock valuation', rows: valuation.data?.items ?? [], columns: [
+        { header: 'SKU', value: (row) => row.sku }, { header: 'Product', value: (row) => row.productName },
+        { header: 'Branch', value: (row) => row.branchName }, { header: 'Godown', value: (row) => 'godownName' in row ? row.godownName : '' },
+        { header: 'Quantity', value: (row) => qtyLabel(row) }, { header: 'Boxes', value: (row) => row.qtyBoxes },
+        { header: 'Landing cost', value: (row) => 'landingCost' in row ? row.landingCost : '' }, { header: 'Value', value: (row) => 'value' in row ? row.value : '' },
+      ] };
     }
     if (tab === 1) {
-      exportCsv<StockAgeingItem>(
-        'stock-ageing',
-        [
-          { header: 'SKU', field: 'sku' },
-          { header: 'Product', field: 'productName' },
-          { header: 'Godown', field: 'godownName' },
-          { header: 'Batch', field: 'batchNo' },
-          { header: 'Quantity', field: (row) => qtyLabel(row) },
-          { header: 'Last inward', field: 'lastInwardDate' },
-          { header: 'Age days', field: 'ageDays' },
-          { header: 'Bucket', field: 'bucket' },
-          { header: 'Value', field: 'value' },
-        ],
-        ageing.data?.items ?? [],
-      );
-      return;
+      return { name: 'stock-ageing', title: 'Stock ageing', rows: ageing.data?.items ?? [], columns: [
+        { header: 'SKU', value: (row) => row.sku }, { header: 'Product', value: (row) => row.productName },
+        { header: 'Godown', value: (row) => 'godownName' in row ? row.godownName : '' }, { header: 'Batch', value: (row) => 'batchNo' in row ? row.batchNo : '' },
+        { header: 'Quantity', value: (row) => qtyLabel(row) }, { header: 'Last inward', value: (row) => 'lastInwardDate' in row ? row.lastInwardDate : '' },
+        { header: 'Age days', value: (row) => 'ageDays' in row ? row.ageDays : '' }, { header: 'Bucket', value: (row) => 'bucket' in row ? row.bucket : '' },
+        { header: 'Value', value: (row) => 'value' in row ? row.value : '' },
+      ] };
     }
-    exportCsv<LowStockItem>(
-      'low-stock',
-      [
-        { header: 'SKU', field: 'sku' },
-        { header: 'Product', field: 'productName' },
-        { header: 'Brand', field: 'brandName' },
-        { header: 'Branch', field: 'branchName' },
-        { header: 'On hand boxes', field: 'qtyBoxes' },
-        { header: 'Reorder level', field: 'reorderLevelBoxes' },
-        { header: 'Shortfall', field: 'shortfallBoxes' },
-        { header: 'On order', field: 'onOrderBoxes' },
-        { header: 'Open POs', field: (row) => row.openOrders.map((o) => o.poNumber).join(' ') },
-        { header: 'To order', field: 'netShortfallBoxes' },
-      ],
-      lowStock.data?.items ?? [],
-    );
+    return { name: 'low-stock', title: 'Low stock', rows: lowStock.data?.items ?? [], columns: [
+      { header: 'SKU', value: (row) => row.sku }, { header: 'Product', value: (row) => row.productName },
+      { header: 'Branch', value: (row) => row.branchName }, { header: 'On hand boxes', value: (row) => row.qtyBoxes },
+      { header: 'Reorder level', value: (row) => 'reorderLevelBoxes' in row ? row.reorderLevelBoxes : '' },
+      { header: 'Shortfall', value: (row) => 'shortfallBoxes' in row ? row.shortfallBoxes : '' },
+      { header: 'On order', value: (row) => 'onOrderBoxes' in row ? row.onOrderBoxes : '' },
+      { header: 'To order', value: (row) => 'netShortfallBoxes' in row ? row.netShortfallBoxes : '' },
+    ] };
   };
 
   return (
@@ -260,9 +235,10 @@ export function StockReportsPage(): JSX.Element {
       title="Stock reports"
       subtitle="Valuation at landing cost, ageing since last inward, and reorder alerts."
       actions={
-        <Button variant="outlined" startIcon={<DownloadIcon />} onClick={download}>
-          Export CSV
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => { const data = exportData(); downloadTableExcel(`${data.name}.xls`, data.title, data.columns, data.rows); }}>Excel</Button>
+          <Button variant="outlined" startIcon={<PictureAsPdfIcon />} onClick={() => { const data = exportData(); downloadTablePdf(`${data.name}.pdf`, data.title, data.columns, data.rows); }}>PDF</Button>
+        </Stack>
       }
     >
       <Stack spacing={1}>
@@ -378,6 +354,7 @@ export function StockReportsPage(): JSX.Element {
               </CardContent>
             </Card>
             <DataTable
+              exportable={false}
               rows={valuation.data?.items ?? []}
               columns={valuationColumns}
               meta={valuation.data?.meta}
@@ -408,6 +385,7 @@ export function StockReportsPage(): JSX.Element {
               </CardContent>
             </Card>
             <DataTable
+              exportable={false}
               rows={ageing.data?.items ?? []}
               columns={ageingColumns}
               meta={ageing.data?.meta}
@@ -421,6 +399,7 @@ export function StockReportsPage(): JSX.Element {
 
         {tab === 2 && (
           <DataTable
+            exportable={false}
             rows={lowStock.data?.items ?? []}
             columns={lowStockColumns}
             meta={lowStock.data?.meta}

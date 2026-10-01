@@ -145,6 +145,8 @@ export interface CreatePurchaseInvoiceInput {
   supplierInvoiceNo: string;
   supplierId: UUID;
   branchId: UUID;
+  /** Required for direct invoices; GRN-linked invoices use the receipt's godown. */
+  godownId?: UUID | null;
   /** Optional link to the receipt being billed. */
   receiptId?: UUID | null;
   invoiceDate?: ISODateString;
@@ -185,6 +187,8 @@ export interface PurchaseInvoiceItem {
   supplierName: string;
   branchId: UUID;
   branchName: string;
+  godownId: UUID | null;
+  godownName: string | null;
   receiptId: UUID | null;
   grnNumber: string | null;
   invoiceDate: ISODateString;

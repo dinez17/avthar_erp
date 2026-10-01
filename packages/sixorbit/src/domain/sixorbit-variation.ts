@@ -78,6 +78,7 @@ export interface MappedSixOrbitProduct {
   mrp: number | null;
   piecesPerBox: number;
   sqftPerBox: number;
+  weightKg: number | null;
   sizeMm: string | null;
   barcode: string | null;
   isActive: boolean;
@@ -218,9 +219,9 @@ export function mapSixOrbitVariation(variation: SixOrbitVariation): MappedSixOrb
 
   return {
     sixorbitId: variation.isvid,
-    // Their `sku` is empty on every row; `variation_number` is the code their own users
-    // recognise, which matters on a picking list far more than an internal id would.
-    sku: text(variation.sku) ?? text(variation.variation_number) ?? variation.isvid,
+    // SixOrbit generates `variation_number` on create. Its `sku` can echo a submitted
+    // local placeholder, so the generated number is the stable ERP product code.
+    sku: text(variation.variation_number) ?? text(variation.sku) ?? variation.isvid,
     name,
     hsnCode: text(variation.hsn_code) ?? '',
     gstRate: num(variation.tax) ?? 0,
@@ -230,6 +231,7 @@ export function mapSixOrbitVariation(variation: SixOrbitVariation): MappedSixOrb
     mrp: num(variation.mrp),
     piecesPerBox,
     sqftPerBox,
+    weightKg: num(variation.weight),
     sizeMm: size,
     barcode: text(variation.barcode),
     isActive: variation.status_id === '1',

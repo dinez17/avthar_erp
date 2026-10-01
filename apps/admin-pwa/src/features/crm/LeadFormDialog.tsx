@@ -8,6 +8,8 @@ import {
   MenuItem,
   Stack,
   TextField,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import { useEffect, useState } from 'react';
 import type { CreateLeadInput, LeadItem, LeadSource, LeadStage } from '@tiles-erp/shared-types';
@@ -17,6 +19,7 @@ import { useCustomers, useSalesmen } from '../sales/api';
 import { useCreateLead, useUpdateLead } from './api';
 import { useCampaignOptions } from './campaigns-api';
 import { INITIAL_STAGES, SOURCES, SOURCE_LABELS, STAGE_LABELS } from './config';
+import { lookupPincode } from '../../lib/pincode';
 
 interface FormState {
   name: string;
@@ -24,6 +27,8 @@ interface FormState {
   phone: string;
   email: string;
   city: string;
+  state: string;
+  pincode: string;
   source: LeadSource;
   stage: LeadStage;
   ownerUserId: string;
@@ -41,6 +46,8 @@ const emptyForm: FormState = {
   phone: '',
   email: '',
   city: '',
+  state: '',
+  pincode: '',
   source: 'WALK_IN',
   stage: 'NEW',
   ownerUserId: '',
@@ -58,6 +65,8 @@ const fromLead = (lead: LeadItem): FormState => ({
   phone: lead.phone ?? '',
   email: lead.email ?? '',
   city: lead.city ?? '',
+  state: lead.state ?? '',
+  pincode: lead.pincode ?? '',
   source: lead.source,
   stage: lead.stage,
   ownerUserId: lead.ownerUserId ?? '',
@@ -78,8 +87,11 @@ interface Props {
 
 /** Create a new lead or edit an existing one. Stage moves happen elsewhere. */
 export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Element {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState<string | null>(null);
+  const [pincodeMessage, setPincodeMessage] = useState('Enter PIN code first to fill city and state');
 
   const customers = useCustomers();
   const salesmen = useSalesmen();
@@ -98,10 +110,28 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
   const set = <K extends keyof FormState>(key: K, value: FormState[K]): void =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
+  useEffect(() => {
+    if (!/^\d{6}$/.test(form.pincode)) return;
+    const timer = window.setTimeout(() => {
+      setPincodeMessage('Looking up PIN code…');
+      void lookupPincode(form.pincode).then(({ city, state }) => {
+        setForm((current) => ({ ...current, city, state }));
+        setPincodeMessage('City and state filled automatically; you can edit them');
+      }).catch((lookupError: unknown) => {
+        setPincodeMessage(lookupError instanceof Error ? lookupError.message : 'Enter city and state manually');
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [form.pincode]);
+
   const submit = async (): Promise<void> => {
     setError(null);
     if (form.name.trim().length < 2) {
       setError('A lead name is required');
+      return;
+    }
+    if (!/^\d{6}$/.test(form.pincode) || !form.city.trim() || !form.state.trim()) {
+      setError('PIN code, city and state are required');
       return;
     }
     // Send nulls for cleared optional links so the server unsets them.
@@ -110,7 +140,9 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
       companyName: form.companyName.trim() || undefined,
       phone: form.phone.trim() || undefined,
       email: form.email.trim() || undefined,
-      city: form.city.trim() || undefined,
+      city: form.city.trim(),
+      state: form.state.trim(),
+      pincode: form.pincode,
       source: form.source,
       ownerUserId: form.ownerUserId || null,
       branchId: form.branchId || null,
@@ -140,16 +172,16 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
   const pending = createLead.isPending || updateLead.isPending;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth fullScreen={mobile}>
       <DialogTitle>{lead ? `Edit ${lead.code}` : 'New lead'}</DialogTitle>
-      <DialogContent>
+      <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
         <Stack spacing={1.5} sx={{ pt: 1 }}>
           {error && (
             <Alert severity="error" onClose={() => setError(null)}>
               {error}
             </Alert>
           )}
-          <Stack direction="row" spacing={1.5}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
               label="Contact name *"
               size="small"
@@ -165,9 +197,10 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
               onChange={(e) => set('companyName', e.target.value)}
             />
           </Stack>
-          <Stack direction="row" spacing={1.5}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
               label="Phone"
+              type="tel"
               size="small"
               fullWidth
               value={form.phone}
@@ -175,20 +208,39 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
             />
             <TextField
               label="Email"
+              type="email"
               size="small"
               fullWidth
               value={form.email}
               onChange={(e) => set('email', e.target.value)}
             />
+          </Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
-              label="City"
+              label="PIN code *"
+              size="small"
+              fullWidth
+              value={form.pincode}
+              onChange={(e) => set('pincode', e.target.value.replace(/\D/g, '').slice(0, 6))}
+              helperText={pincodeMessage}
+              inputProps={{ inputMode: 'numeric', maxLength: 6 }}
+            />
+            <TextField
+              label="City *"
               size="small"
               fullWidth
               value={form.city}
               onChange={(e) => set('city', e.target.value)}
             />
+            <TextField
+              label="State *"
+              size="small"
+              fullWidth
+              value={form.state}
+              onChange={(e) => set('state', e.target.value)}
+            />
           </Stack>
-          <Stack direction="row" spacing={1.5}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
               select
               label="Source"
@@ -228,7 +280,7 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
               onChange={(e) => set('expectedValue', e.target.value)}
             />
           </Stack>
-          <Stack direction="row" spacing={1.5}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
               select
               label="Salesman"
@@ -261,7 +313,7 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
               ))}
             </TextField>
           </Stack>
-          <Stack direction="row" spacing={1.5}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
               select
               label="Customer (if known)"
@@ -315,11 +367,11 @@ export function LeadFormDialog({ open, lead, onClose, onSaved }: Props): JSX.Ele
           />
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button color="inherit" onClick={onClose}>
+      <DialogActions sx={{ px: { xs: 2, sm: 3 }, pb: { xs: 2, sm: 1 }, gap: 1 }}>
+        <Button color="inherit" onClick={onClose} fullWidth={mobile}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={() => void submit()} disabled={pending}>
+        <Button variant="contained" onClick={() => void submit()} disabled={pending} fullWidth={mobile}>
           {pending ? 'Saving…' : lead ? 'Save changes' : 'Create lead'}
         </Button>
       </DialogActions>

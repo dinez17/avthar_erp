@@ -63,7 +63,7 @@ export class QuotationLineDto {
 
   @ApiProperty({ example: 1250, description: "Blank uses the branch's selling price" })
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsNumber({ maxDecimalPlaces: 8 })
   @Min(0)
   rate!: number;
 
@@ -289,6 +289,16 @@ export class QuotationStatusDto {
 }
 
 export class QuotationListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  toDate?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsUUID('4')
   @IsOptional()
@@ -298,6 +308,11 @@ export class QuotationListQueryDto extends PaginationQueryDto {
   @IsUUID('4')
   @IsOptional()
   branchId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  salesmanUserId?: string;
 
   @ApiPropertyOptional({ enum: STATUSES })
   @IsIn(STATUSES)

@@ -19,6 +19,7 @@ import { PrismaSalesOrderRepository } from './infrastructure/prisma-sales-order.
 import { QuotationController } from './presentation/quotation.controller';
 import { DashboardController } from './presentation/dashboard.controller';
 import { ProfitController } from './presentation/profit.controller';
+import { IncentiveController } from './presentation/incentive.controller';
 import { ReceiptController } from './presentation/receipt.controller';
 import { SalesInvoiceController } from './presentation/sales-invoice.controller';
 import { SalesOrderController } from './presentation/sales-order.controller';
@@ -47,6 +48,7 @@ import {
 } from './application/sales-order.handlers';
 import {
   CancelSalesInvoiceHandler,
+  CreateSalesReturnHandler,
   CreateSalesInvoiceHandler,
   DeleteSalesInvoiceHandler,
   GetSalesInvoiceHandler,
@@ -54,6 +56,7 @@ import {
   ListSalesInvoicesHandler,
   OrderSplitPlanHandler,
   PostSalesInvoiceHandler,
+  PrintDeliverySlipHandler,
   SplitSalesOrderHandler,
   SalesInvoicePrintHandler,
   UpdateSalesInvoiceHandler,
@@ -82,6 +85,7 @@ import { Gstr1ReturnHandler, GstSummaryHandler } from './application/gst.handler
   imports: [CqrsModule, AccountsModule],
   controllers: [
     ProfitController,
+    IncentiveController,
     QuotationController,
     SalesOrderController,
     SalesInvoiceController,
@@ -121,8 +125,9 @@ import { Gstr1ReturnHandler, GstSummaryHandler } from './application/gst.handler
   PostSalesInvoiceHandler,
   SplitSalesOrderHandler,
     SalesInvoicePrintHandler,
-  SalesInvoicePrintHandler,
+    PrintDeliverySlipHandler,
     CancelSalesInvoiceHandler,
+    CreateSalesReturnHandler,
     DeleteSalesInvoiceHandler,
     { provide: RECEIPT_REPOSITORY, useClass: PrismaReceiptRepository },
     ListReceiptsHandler,

@@ -43,6 +43,7 @@ const ENTITY_TYPES: SixOrbitEntityType[] = [
   'CUSTOMER',
   'PRODUCT',
   'SALES_ORDER',
+  'SALES_INVOICE',
 ];
 
 const ENTITY_LABELS: Record<SixOrbitEntityType, string> = {
@@ -51,6 +52,7 @@ const ENTITY_LABELS: Record<SixOrbitEntityType, string> = {
   CUSTOMER: 'Customers',
   PRODUCT: 'Products',
   SALES_ORDER: 'Sales orders',
+  SALES_INVOICE: 'Sales invoices',
 };
 
 type OutcomeFilter = 'all' | 'failures' | 'successes';

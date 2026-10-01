@@ -26,16 +26,25 @@ import {
   Typography,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
-import { formatBoxPieces } from '@tiles-erp/shared';
+import { useEffect, useMemo, useState } from 'react';
+import { formatBoxPieces, toDateInput } from '@tiles-erp/shared';
 import { usePagination } from '@tiles-erp/hooks';
 import { PageContainer } from '@tiles-erp/ui';
 import type { QuotationItem, QuotationStatus } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
+import { ListExportButtons, type ExportColumn } from '../../components/ListExportButtons';
 import { ApiError } from '../../lib/api-client';
 import { useBranches } from '../products/branch-prices-api';
-import { useCustomers, useQuotation, useQuotations, useQuotationStatus } from './api';
+import { useAuth } from '../../auth/AuthProvider';
+import {
+  useCustomers,
+  useQuotation,
+  useQuotations,
+  useQuotationStatus,
+  useSalesmen,
+} from './api';
 import { useNavigate } from 'react-router-dom';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const STATUS_COLORS: Record<
   QuotationStatus,
@@ -60,7 +69,7 @@ const STATUSES: QuotationStatus[] = [
 
 /** Paper the counter prints on; picked from the printer icon and passed to the print view. */
 const PAPER_SIZES = [
-  { value: 'A4', label: 'A4' },
+  { value: 'A5', label: 'A5 estimate' },
   { value: '80mm', label: '80 mm roll' },
   { value: '58mm', label: '58 mm roll' },
 ] as const;
@@ -68,19 +77,58 @@ const PAPER_SIZES = [
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
+const quotationExportColumns: ExportColumn<QuotationItem>[] = [
+  { header: 'Quote no', value: (row) => row.quotationNumber, width: 125 },
+  { header: 'Date', value: (row) => new Date(row.quotationDate).toLocaleDateString('en-IN'), width: 80 },
+  { header: 'Customer', value: (row) => row.customerName, width: 180 },
+  { header: 'Mobile', value: (row) => row.customerMobile, width: 100 },
+  { header: 'Salesman', value: (row) => row.salesmanName, width: 130 },
+  { header: 'Total', value: (row) => row.grandTotal, width: 90 },
+  { header: 'Status', value: (row) => row.status, width: 90 },
+];
+
 /** Quotations: draft, send to the customer, then accept or reject. */
 export function QuotationsPage(): JSX.Element {
   const navigate = useNavigate();
   const pagination = usePagination();
   const customers = useCustomers();
   const branches = useBranches();
+  const { user } = useAuth();
+  const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
+  const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [customerId, setCustomerId] = useState('');
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
+  const [salesmanUserId, setSalesmanUserId] = useState('');
+  const salesmen = useSalesmen(branchId || undefined);
+  const isSalesUser = Boolean(user && salesmen.data?.some((salesman) => salesman.id === user.id));
+  useEffect(() => {
+    if (!canChangeBranch && user?.branchIds.length) {
+      setBranchId((current) => user.branchIds.includes(current) ? current : user.branchIds[0]!);
+    }
+  }, [canChangeBranch, user?.branchIds]);
+  useEffect(() => {
+    if (isSalesUser && user) {
+      setSalesmanUserId(user.id);
+      return;
+    }
+    if (
+      salesmanUserId &&
+      salesmen.isSuccess &&
+      !salesmen.data.some((salesman) => salesman.id === salesmanUserId)
+    ) {
+      setSalesmanUserId('');
+    }
+  }, [isSalesUser, salesmanUserId, salesmen.data, salesmen.isSuccess, user]);
   const [status, setStatus] = useState<QuotationStatus | ''>('');
+  const [fromDate, setFromDate] = useState(() => toDateInput(new Date()));
+  const [toDate, setToDate] = useState(() => toDateInput(new Date()));
 
   const { data, isFetching } = useQuotations(pagination.query, {
+    fromDate,
+    toDate,
     customerId: customerId || undefined,
     branchId: branchId || undefined,
+    salesmanUserId: salesmanUserId || undefined,
     status: status || undefined,
   });
   const changeStatus = useQuotationStatus();
@@ -127,22 +175,6 @@ export function QuotationsPage(): JSX.Element {
       { field: 'customerName', headerName: 'Customer', minWidth: 190 },
       { field: 'customerMobile', headerName: 'Mobile', maxWidth: 130 },
       { field: 'salesmanName', headerName: 'Salesman', minWidth: 140 },
-      { field: 'branchName', headerName: 'Branch', minWidth: 140 },
-      {
-        field: 'validUntil',
-        headerName: 'Valid until',
-        minWidth: 130,
-        cellRenderer: (p: ICellRendererParams<QuotationItem>) => {
-          if (!p.value) return '—';
-          const text = new Date(p.value as string).toLocaleDateString();
-          return p.data?.isExpired ? (
-            <Chip label={`${text} · expired`} size="small" color="warning" />
-          ) : (
-            text
-          );
-        },
-      },
-      { field: 'lineCount', headerName: 'Lines', maxWidth: 90 },
       {
         field: 'grandTotal',
         headerName: 'Total',
@@ -183,11 +215,11 @@ export function QuotationsPage(): JSX.Element {
                   <PrintIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title={q.status === 'DRAFT' ? 'Edit draft' : 'Only drafts can be edited'}>
+              <Tooltip title={q.status === 'DRAFT' || q.status === 'SENT' ? 'Edit quotation' : 'Cannot edit after customer acceptance'}>
                 <span>
                   <IconButton
                     size="small"
-                    disabled={q.status !== 'DRAFT'}
+                    disabled={q.status !== 'DRAFT' && q.status !== 'SENT'}
                     onClick={() => navigate(`/quotations/${q.id}/edit`)}
                   >
                     <EditIcon fontSize="small" />
@@ -266,6 +298,26 @@ export function QuotationsPage(): JSX.Element {
 
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <TextField
+            label="From date"
+            type="date"
+            size="small"
+            value={fromDate}
+            onChange={(e) => { setFromDate(e.target.value); pagination.setPage(1); }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ max: toDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <TextField
+            label="To date"
+            type="date"
+            size="small"
+            value={toDate}
+            onChange={(e) => { setToDate(e.target.value); pagination.setPage(1); }}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ min: fromDate || undefined }}
+            sx={{ width: { xs: '100%', sm: 165 } }}
+          />
+          <TextField
             select
             label="Customer"
             size="small"
@@ -286,18 +338,39 @@ export function QuotationsPage(): JSX.Element {
           </TextField>
           <TextField
             select
+            label="Salesman"
+            size="small"
+            fullWidth={false}
+            value={salesmanUserId}
+            disabled={isSalesUser}
+            onChange={(e) => {
+              setSalesmanUserId(e.target.value);
+              pagination.setPage(1);
+            }}
+            sx={{ width: 190 }}
+          >
+            {!isSalesUser && <MenuItem value="">All salesmen</MenuItem>}
+            {(salesmen.data ?? []).map((salesman) => (
+              <MenuItem key={salesman.id} value={salesman.id}>
+                {salesman.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select
             label="Branch"
             size="small"
             fullWidth={false}
             value={branchId}
+            disabled={!canChangeBranch && availableBranches.length === 0}
             onChange={(e) => {
               setBranchId(e.target.value);
               pagination.setPage(1);
             }}
             sx={{ width: 180 }}
           >
-            <MenuItem value="">All branches</MenuItem>
-            {(branches.data ?? []).map((b) => (
+            {canChangeBranch && <MenuItem value="">All branches</MenuItem>}
+            {availableBranches.map((b) => (
               <MenuItem key={b.id} value={b.id}>
                 {b.name}
               </MenuItem>
@@ -322,9 +395,26 @@ export function QuotationsPage(): JSX.Element {
               </MenuItem>
             ))}
           </TextField>
+          <ListExportButtons<QuotationItem>
+            path="/quotations"
+            params={{
+              search: pagination.query.search,
+              customerId: customerId || undefined,
+              branchId: branchId || undefined,
+              salesmanUserId: salesmanUserId || undefined,
+              status: status || undefined,
+              fromDate: fromDate || undefined,
+              toDate: toDate || undefined,
+            }}
+            columns={quotationExportColumns}
+            title="Quotations"
+            filename="quotations"
+            onError={setError}
+          />
         </Stack>
 
         <DataTable
+          exportable={false}
           rows={data?.items ?? []}
           columns={columns}
           meta={data?.meta}
@@ -332,6 +422,7 @@ export function QuotationsPage(): JSX.Element {
           loading={isFetching}
           searchPlaceholder="Search by quote number or customer…"
           height={580}
+          gridOptions={{ enableCellTextSelection: true, ensureDomOrder: true }}
         />
       </Stack>
 

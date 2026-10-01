@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Collapse,
@@ -21,6 +21,8 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import CategoryIcon from '@mui/icons-material/Category';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import { useAuth } from '../auth/AuthProvider';
+import { canSeeMenu } from '../router/menu-permissions';
 import { BrandMark } from '../app/branding';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
@@ -188,6 +190,14 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose, isDesktop, title }: SidebarProps): JSX.Element {
   const { pathname } = useLocation();
+  const { user } = useAuth();
+  const visibleSections = useMemo(() => NAV_SECTIONS.map((section) => ({
+    ...section,
+    groups: section.groups.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => canSeeMenu(item.path, user?.permissions ?? [], user?.roles ?? [])),
+    })).filter((group) => group.items.length > 0),
+  })).filter((section) => section.groups.length > 0), [user]);
   const activeGroup = groupIdForPath(pathname);
   const [openGroups, setOpenGroups] = useState<string[]>(readOpenGroups);
 
@@ -241,7 +251,7 @@ export function Sidebar({ open, onClose, isDesktop, title }: SidebarProps): JSX.
 
       <Box sx={{ flex: 1, overflowY: 'auto', px: 1.5, pt: 1.75, pb: 3 }}>
         <List disablePadding>
-          <ListItemButton
+          {canSeeMenu(NAV_HOME.path, user?.permissions ?? [], user?.roles ?? []) && <ListItemButton
             component={NavLink}
             to={NAV_HOME.path}
             end
@@ -265,9 +275,9 @@ export function Sidebar({ open, onClose, isDesktop, title }: SidebarProps): JSX.
               primary={NAV_HOME.label}
               primaryTypographyProps={{ fontSize: '0.85rem', fontWeight: 600 }}
             />
-          </ListItemButton>
+          </ListItemButton>}
 
-          {NAV_SECTIONS.map((section) => (
+          {visibleSections.map((section) => (
             <Box key={section.eyebrow}>
               <Typography
                 variant="overline"

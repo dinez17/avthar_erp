@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { ageingBucketFor, AGEING_BUCKETS } from '@tiles-erp/shared';
 import type {
+  DispatchedProductReport,
+  DispatchedProductRow,
   AgeingBucket,
   DriverCashReport,
   DriverCashRow,
@@ -38,6 +40,100 @@ const reportable = (window: DispatchReportWindow): Prisma.GatePassWhereInput => 
 @Injectable()
 export class PrismaDispatchReportRepository implements DispatchReportRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  async dispatchedProducts(on: Date, branchId?: UUID): Promise<DispatchedProductReport> {
+    const start = new Date(on);
+    const end = new Date(start.getTime() + DAY - 1);
+
+    const lines = await this.prisma.salesInvoiceLine.findMany({
+      where: {
+        salesInvoice: {
+          deletedAt: null,
+          status: 'POSTED',
+          postedAt: { gte: start, lte: end },
+          ...(branchId ? { branchId } : {}),
+        },
+      },
+      select: {
+        productId: true,
+        boxes: true,
+        pieces: true,
+        qtyBoxes: true,
+        product: { select: { sku: true, name: true, sizeMm: true } },
+        salesInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            customerName: true,
+            branchId: true,
+            postedAt: true,
+            branch: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [{ salesInvoice: { postedAt: 'desc' } }, { lineNo: 'asc' }],
+    });
+
+    const keys = [...new Set(lines.map((line) => `${line.salesInvoice.branchId}:${line.productId}`))];
+    const productIds = [...new Set(lines.map((line) => line.productId))];
+    const branchIds = [...new Set(lines.map((line) => line.salesInvoice.branchId))];
+    const [balances, movements] = productIds.length === 0
+      ? [[], []] as const
+      : await Promise.all([
+          this.prisma.stockBalance.groupBy({
+            by: ['branchId', 'productId'],
+            where: { productId: { in: productIds }, branchId: { in: branchIds } },
+            _sum: { qtyBoxes: true },
+          }),
+          this.prisma.stockMovement.groupBy({
+            by: ['branchId', 'productId'],
+            where: { productId: { in: productIds }, branchId: { in: branchIds } },
+            _max: { createdAt: true },
+          }),
+        ]);
+
+    const balanceByKey = new Map(
+      balances
+        .filter((row) => keys.includes(`${row.branchId}:${row.productId}`))
+        .map((row) => [`${row.branchId}:${row.productId}`, Number(row._sum.qtyBoxes ?? 0)]),
+    );
+    const updatedByKey = new Map(
+      movements
+        .filter((row) => keys.includes(`${row.branchId}:${row.productId}`))
+        .map((row) => [`${row.branchId}:${row.productId}`, row._max.createdAt?.toISOString() ?? null]),
+    );
+
+    const rows: DispatchedProductRow[] = lines.map((line) => {
+      const key = `${line.salesInvoice.branchId}:${line.productId}`;
+      return {
+        salesInvoiceId: line.salesInvoice.id,
+        invoiceNumber: line.salesInvoice.invoiceNumber,
+        dispatchedAt: (line.salesInvoice.postedAt ?? start).toISOString(),
+        customerName: line.salesInvoice.customerName,
+        branchName: line.salesInvoice.branch.name,
+        productId: line.productId,
+        sku: line.product.sku,
+        productName: line.product.name,
+        sizeMm: line.product.sizeMm,
+        boxes: line.boxes,
+        pieces: line.pieces,
+        qtyBoxes: Number(line.qtyBoxes),
+        actualStockBoxes: round3(balanceByKey.get(key) ?? 0),
+        stockUpdatedAt: updatedByKey.get(key) ?? null,
+      };
+    });
+
+    return {
+      date: start.toISOString(),
+      rows,
+      totals: {
+        lines: rows.length,
+        boxes: rows.reduce((sum, row) => sum + row.boxes, 0),
+        pieces: rows.reduce((sum, row) => sum + row.pieces, 0),
+        qtyBoxes: round3(rows.reduce((sum, row) => sum + row.qtyBoxes, 0)),
+      },
+    };
+  }
 
   /**
    * Freight per customer.

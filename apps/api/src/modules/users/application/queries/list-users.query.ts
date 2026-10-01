@@ -4,4 +4,6 @@ export class ListUsersQuery {
   constructor(public readonly pagination: PaginationQuery) {}
 }
 
-export class ListSalesmenQuery {}
+export class ListSalesmenQuery {
+  constructor(public readonly branchId?: string) {}
+}

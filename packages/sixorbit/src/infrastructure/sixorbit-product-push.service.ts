@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { ValidationError } from '@tiles-erp/shared';
 import { SIXORBIT_TASKS } from '../domain/sixorbit-task';
 import {
   buildSixOrbitPushPlan,
@@ -20,20 +21,26 @@ export interface SixOrbitPushOutcome {
   reason: string | null;
 }
 
-/** What `variation/create_variation_submit` gives back. */
+/** The generated number is in `obj`, not in `sku` (which echoes `sku_code`). */
 interface CreateVariationResponse {
-  isvid?: string;
-  variations?: { isvid?: string }[];
+  isvid?: string | number;
+  variation_number?: string | number;
+  obj?: { isvid?: string | number; variation_number?: string | number }[];
+  variations?: { isvid?: string | number; variation_number?: string | number }[];
 }
+
+const nonEmpty = (value: string | number | undefined | null): string | null => {
+  if (value === undefined || value === null) return null;
+  return String(value).trim() || null;
+};
 
 /**
  * Writes one of our products into SixOrbit.
  *
- * **On duplicates.** No task in their API accepts an external reference, so a create that
- * times out after they committed it leaves us with no id and them with a product. The
- * retry would make a second one. Every create therefore searches for the sku first and
- * adopts an exact match instead — which costs one extra request and removes the only
- * unrecoverable failure in this integration.
+ * **On duplicates.** An add leaves `sku_code` empty so SixOrbit generates its own
+ * `variation_number`. Before adding, an exact match on the old ERP SKU or a remote `sku`
+ * is adopted when available. A timed-out add without a returned isvid cannot be found
+ * reliably by the old SKU, so queued unlinked creates get one attempt only.
  *
  * **On blocked products.** Their API can create neither a brand nor a category. A product
  * under a master they do not have is marked BLOCKED with a reason a human can act on,
@@ -46,7 +53,7 @@ export class SixOrbitProductPushService {
     private readonly logger: SixOrbitLogger = silentSixOrbitLogger,
   ) {}
 
-  async push(productId: string, jobId: string | null = null): Promise<SixOrbitPushOutcome> {
+  async push(productId: string, jobId: string | null = null, branchId: string | null = null): Promise<SixOrbitPushOutcome> {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
       include: {
@@ -67,6 +74,39 @@ export class SixOrbitProductPushService {
       };
     }
 
+    // A create may have succeeded and saved its isvid while the follow-up number lookup
+    // failed. Recover the generated number before an edit can submit the old ERP SKU.
+    if (product.sixorbitId && !product.sixorbitNumber) {
+      try {
+        const recoveredSku = await this.fetchVariationNumber(product.sixorbitId, product.id, jobId);
+        await this.prisma.product.update({
+          where: { id: product.id },
+          data: { sku: recoveredSku, sixorbitNumber: recoveredSku, version: { increment: 1 } },
+        });
+        product.sku = recoveredSku;
+        product.sixorbitNumber = recoveredSku;
+      } catch (error) {
+        await this.prisma.product.update({
+          where: { id: product.id },
+          data: {
+            sixorbitSyncStatus: 'FAILED',
+            sixorbitSyncError: error instanceof Error ? error.message : String(error),
+          },
+        });
+        throw error;
+      }
+    }
+
+    const branchPrice = branchId
+      ? await this.prisma.productBranchPrice.findUnique({
+          where: { productId_branchId: { productId, branchId } },
+          select: { franchiseeRate: true },
+        })
+      : null;
+    if (branchId && !branchPrice) {
+      throw new ValidationError('Set the franchisee rate for this product and branch in Selling Prices before syncing.');
+    }
+
     const input: SixOrbitPushInput = {
       sixorbitId: product.sixorbitId,
       name: product.name,
@@ -75,6 +115,7 @@ export class SixOrbitProductPushService {
       gstRate: Number(product.gstRate),
       sellingRate: product.sellingRate === null ? null : Number(product.sellingRate),
       purchaseRate: product.purchaseRate === null ? null : Number(product.purchaseRate),
+      franchiseeRate: branchPrice ? Number(branchPrice.franchiseeRate) : null,
       mrp: product.mrp === null ? null : Number(product.mrp),
       piecesPerBox: product.piecesPerBox,
       sqftPerBox: Number(product.sqftPerBox),
@@ -111,12 +152,14 @@ export class SixOrbitProductPushService {
       if (existing?.isvid) {
         // They already have it. Editing what is there beats creating a second one.
         this.logger.warn?.(
-          `SixOrbit already has variation_number ${product.sku} as ${existing.isvid}; editing instead of creating.`,
+          `SixOrbit already has SKU ${product.sku} as ${existing.isvid}; editing instead of creating.`,
         );
         operation = 'edit';
         adopted = true;
+        const adoptedSku = nonEmpty(existing.variation_number) ?? product.sku;
         payload = buildSixOrbitPushPlan({
           ...input,
+          sku: adoptedSku,
           sixorbitId: existing.isvid,
           raw: existing as unknown as Record<string, unknown>,
         }).payload;
@@ -132,24 +175,44 @@ export class SixOrbitProductPushService {
         // The id is a fact about their catalogue; whether our edit was accepted is not.
         await this.prisma.product.update({
           where: { id: productId },
-          data: { sixorbitId: existing.isvid, sixorbitNumber: product.sku },
+          data: {
+            ...(adoptedSku !== product.sku
+              ? { sku: adoptedSku, version: { increment: 1 } }
+              : {}),
+            sixorbitId: existing.isvid,
+            sixorbitNumber: adoptedSku,
+          },
         });
+        product.sku = adoptedSku;
       }
     }
 
     try {
-      const sixorbitId = await this.send(operation, payload, product, jobId);
+      const sent = await this.send(operation, payload, product, jobId);
+      let generatedSku: string | null = null;
+      if (operation === 'create') {
+        // The returned isvid identifies the remote row even if the number lookup or our
+        // SKU update fails. Save it first so a retry cannot create a second variation.
+        await this.prisma.product.update({
+          where: { id: productId },
+          data: { sixorbitId: sent.sixorbitId },
+        });
+        generatedSku =
+          sent.variationNumber ??
+          (await this.fetchVariationNumber(sent.sixorbitId, productId, jobId));
+      }
       await this.prisma.product.update({
         where: { id: productId },
         data: {
-          sixorbitId,
-          sixorbitNumber: product.sku,
+          ...(generatedSku ? { sku: generatedSku, version: { increment: 1 } } : {}),
+          sixorbitId: sent.sixorbitId,
+          sixorbitNumber: generatedSku ?? product.sku,
           sixorbitSyncStatus: 'SYNCED',
           sixorbitSyncedAt: new Date(),
           sixorbitSyncError: null,
         },
       });
-      return { productId, operation, sixorbitId, adopted, reason: null };
+      return { productId, operation, sixorbitId: sent.sixorbitId, adopted, reason: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.prisma.product.update({
@@ -167,7 +230,7 @@ export class SixOrbitProductPushService {
     payload: Record<string, unknown>,
     product: { id: string; sku: string; sixorbitId: string | null },
     jobId: string | null,
-  ): Promise<string> {
+  ): Promise<{ sixorbitId: string; variationNumber: string | null }> {
     const spec =
       operation === 'create' ? SIXORBIT_TASKS.CREATE_VARIATION : SIXORBIT_TASKS.EDIT_VARIATION;
 
@@ -185,10 +248,14 @@ export class SixOrbitProductPushService {
 
     if (operation === 'edit') {
       // An edit keeps the id it was given; their response does not repeat it.
-      return (payload.isvid as string) ?? product.sixorbitId ?? '';
+      return {
+        sixorbitId: (payload.isvid as string) ?? product.sixorbitId ?? '',
+        variationNumber: null,
+      };
     }
 
-    const created = data?.isvid ?? data?.variations?.[0]?.isvid;
+    const row = data?.obj?.[0] ?? data?.variations?.[0];
+    const created = nonEmpty(data?.isvid ?? row?.isvid);
     if (!created) {
       // They accepted it but told us nothing. Failing here is right: without the id the
       // next push would create a second copy.
@@ -197,10 +264,42 @@ export class SixOrbitProductPushService {
         'UNKNOWN',
       );
     }
-    return created;
+    return {
+      sixorbitId: created,
+      variationNumber: nonEmpty(row?.variation_number ?? data?.variation_number),
+    };
   }
 
-  /** Their search is a contains match, so the exact variation_number is confirmed here. */
+  /** `variation/fetch&isvid=...` is the documented detail lookup for a generated code. */
+  private async fetchVariationNumber(
+    sixorbitId: string,
+    productId: string,
+    jobId: string | null,
+  ): Promise<string> {
+    const data = await this.client.callOrThrow<SixOrbitVariationPage & Partial<SixOrbitVariation>>({
+      spec: SIXORBIT_TASKS.FETCH_VARIATION,
+      params: { isvid: sixorbitId },
+      log: {
+        entityType: 'PRODUCT',
+        entityId: productId,
+        externalId: sixorbitId,
+        direction: 'PULL',
+        jobId,
+      },
+    });
+    const variation = data.variations?.find((v) => v.isvid === sixorbitId) ??
+      (data.isvid === sixorbitId ? data : null);
+    const number = nonEmpty(variation?.variation_number);
+    if (!number) {
+      throw new SixOrbitApiError(
+        `SixOrbit variation ${sixorbitId} returned no variation_number, so the ERP SKU cannot be updated.`,
+        'UNKNOWN',
+      );
+    }
+    return number;
+  }
+
+  /** Their search is a contains match, so the variation number or SKU is checked exactly. */
   private async findBySku(
     sku: string,
     productId: string,
@@ -213,6 +312,14 @@ export class SixOrbitProductPushService {
     });
 
     if (!outcome.ok) {
+      // `variation/fetch` uses a failed envelope with 20004 for a normal empty search.
+      // This is the specific absence result; other failures still stop the create.
+      if (
+        outcome.resultCode === '20004' &&
+        /^No Variation found\.?$/i.test(outcome.message.trim())
+      ) {
+        return null;
+      }
       // A failed lookup must not be read as "no duplicate exists" — that is exactly how
       // the duplicate gets made. Fail the push instead and let it be retried.
       throw new SixOrbitApiError(
@@ -222,6 +329,8 @@ export class SixOrbitProductPushService {
       );
     }
 
-    return (outcome.data.variations ?? []).find((v) => v.variation_number === sku) ?? null;
+    return (outcome.data.variations ?? []).find(
+      (v) => v.variation_number === sku || v.sku === sku,
+    ) ?? null;
   }
 }

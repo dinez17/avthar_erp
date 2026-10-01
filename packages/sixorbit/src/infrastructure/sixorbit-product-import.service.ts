@@ -314,6 +314,7 @@ export class SixOrbitProductImportService {
       sizeMm: item.sizeMm,
       piecesPerBox: item.piecesPerBox,
       sqftPerBox: item.sqftPerBox,
+      weightKg: item.weightKg,
       hsnCode: item.hsnCode,
       gstRate: item.gstRate,
       mrp: item.mrp,

@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { financialYearStart, NotFoundError, ValidationError } from '@tiles-erp/shared';
 import type {
   ExpenseHeadItem,
+  ExpenseHeadLedger,
   LedgerAccountItem,
   LedgerAccountType,
   SaveExpenseHeadInput,
@@ -246,7 +247,7 @@ export class PrismaLedgerAccountRepository implements LedgerAccountRepository {
     });
   }
 
-  async listExpenseHeads(includeInactive: boolean): Promise<ExpenseHeadItem[]> {
+  async listExpenseHeads(includeInactive: boolean, branchId?: UUID): Promise<ExpenseHeadItem[]> {
     const rows = await this.prisma.expenseHead.findMany({
       where: { deletedAt: null, ...(includeInactive ? {} : { isActive: true }) },
       orderBy: { name: 'asc' },
@@ -260,6 +261,7 @@ export class PrismaLedgerAccountRepository implements LedgerAccountRepository {
       where: {
         expenseHeadId: { in: rows.map((row) => row.id) },
         entryDate: { gte: financialYearStart(new Date()) },
+        ...(branchId ? { branchId } : {}),
       },
       _sum: { amount: true },
     });
@@ -279,6 +281,51 @@ export class PrismaLedgerAccountRepository implements LedgerAccountRepository {
       spentThisYear: spentByHead.get(row.id) ?? 0,
       version: row.version,
     }));
+  }
+
+  async expenseHeadLedger(id: UUID, from: Date, to: Date, branchId?: UUID): Promise<ExpenseHeadLedger> {
+    if (from > to) throw new ValidationError('The period ends before it starts');
+    const head = (await this.listExpenseHeads(true, branchId)).find((item) => item.id === id);
+    if (!head) throw new NotFoundError('Expense head not found');
+    const rows = await this.prisma.cashEntry.findMany({
+      where: { expenseHeadId: id, entryDate: { gte: from, lte: to }, ...(branchId ? { branchId } : {}) },
+      include: {
+        account: { select: { name: true } },
+        counterAccount: { select: { name: true } },
+        expenseHead: { select: { name: true } },
+        branch: { select: { name: true } },
+      },
+      orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
+    });
+    let balance = 0;
+    const entries = rows.map((row) => {
+      balance = round2(balance + Number(row.amount) * (row.direction === 'OUT' ? 1 : -1));
+      return {
+        id: row.id,
+        entryNumber: row.entryNumber,
+        accountId: row.accountId,
+        accountName: row.account.name,
+        branchId: row.branchId,
+        branchName: row.branch?.name ?? null,
+        entryDate: row.entryDate.toISOString(),
+        type: row.type,
+        direction: row.direction,
+        amount: Number(row.amount),
+        expenseHeadId: row.expenseHeadId,
+        expenseHeadName: row.expenseHead?.name ?? null,
+        counterAccountId: row.counterAccountId,
+        counterAccountName: row.counterAccount?.name ?? null,
+        source: row.source,
+        refType: row.refType,
+        refNumber: row.refNumber,
+        referenceNo: row.referenceNo,
+        narration: row.narration,
+        reversedAt: row.reversedAt?.toISOString() ?? null,
+        reversalReason: row.reversalReason,
+        balance,
+      };
+    });
+    return { head, from: from.toISOString(), to: to.toISOString(), total: balance, entries };
   }
 
   private async assertHeadShape(data: SaveExpenseHeadInput, id?: UUID): Promise<void> {

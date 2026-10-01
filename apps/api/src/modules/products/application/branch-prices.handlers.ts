@@ -69,7 +69,9 @@ export class BulkUpdateBranchPricesHandler
       if (seen.has(item.productId)) throw new ValidationError('Duplicate products in request');
       seen.add(item.productId);
 
-      if (item.displayPrice < 0 || item.minSellingPrice < 0 || item.sellingPrice < 0) {
+      if (item.displayPrice < 0 || item.minSellingPrice < 0 || item.sellingPrice < 0 ||
+          (item.franchiseeRate !== undefined && item.franchiseeRate < 0) ||
+          (item.mrp !== undefined && item.mrp < 0)) {
         throw new ValidationError('Prices cannot be negative');
       }
       if (item.sellingPrice < item.minSellingPrice) {

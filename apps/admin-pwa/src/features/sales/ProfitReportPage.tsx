@@ -1,4 +1,5 @@
 import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   Alert,
   Box,
@@ -21,9 +22,11 @@ import {
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageContainer } from '@tiles-erp/ui';
-import type { ProfitGrouping, ProfitReport, ProfitRow } from '@tiles-erp/shared-types';
+import type { ProfitGrouping, ProfitRow } from '@tiles-erp/shared-types';
 import { useBranches } from '../products/branch-prices-api';
 import { useAreaAudit, useProfitReport } from './profit-api';
+import { downloadTableExcel, downloadTablePdf, type ExportColumn } from '../../components/ListExportButtons';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number | null | undefined): string =>
   typeof value === 'number' && Number.isFinite(value)
@@ -58,23 +61,6 @@ const GROUPINGS: { value: ProfitGrouping; label: string }[] = [
   { value: 'SALESMAN', label: 'By salesman' },
 ];
 
-const csvOf = (report: ProfitReport): string => {
-  const escape = (value: string): string => `"${value.replace(/"/g, '""')}"`;
-  const header = ['', 'Detail', 'Boxes', 'Revenue', 'Cost', 'Margin', 'Margin %'];
-  const rows = report.rows.map((row) => [
-    row.label,
-    row.subLabel ?? '',
-    row.qtyBoxes.toFixed(3),
-    row.revenue.toFixed(2),
-    row.cost.toFixed(2),
-    row.margin.toFixed(2),
-    row.marginPct.toFixed(2),
-  ]);
-  return [header, ...rows]
-    .map((row) => row.map((cell) => escape(String(cell))).join(','))
-    .join('\n');
-};
-
 /**
  * What was sold, what it cost, and the difference.
  *
@@ -87,32 +73,25 @@ export function ProfitReportPage(): JSX.Element {
   const [grouping, setGrouping] = useState<ProfitGrouping>('INVOICE');
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(localDay(new Date()));
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
 
   const branches = useBranches();
   const { data: report, isLoading } = useProfitReport({ grouping, from, to, branchId });
   const { data: audit } = useAreaAudit();
 
-  const download = (): void => {
-    if (!report) return;
-    const blob = new Blob([csvOf(report)], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `profit-${grouping.toLowerCase()}-${from}-to-${to}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
+  const exportColumns: ExportColumn<ProfitRow>[] = [
+    { header: GROUPINGS.find((item) => item.value === grouping)?.label.slice(3) ?? 'Group', value: (row) => row.label },
+    { header: 'Detail', value: (row) => row.subLabel }, { header: 'Boxes', value: (row) => row.qtyBoxes },
+    { header: 'Revenue', value: (row) => row.revenue }, { header: 'Cost', value: (row) => row.cost },
+    { header: 'Margin', value: (row) => row.margin }, { header: 'Margin %', value: (row) => row.marginPct },
+  ];
+  const exportName = `profit-${grouping.toLowerCase()}-${from}-to-${to}`;
 
   return (
     <PageContainer
       title="Profit"
       subtitle="Revenue against what the goods cost, from the figure frozen when each invoice was posted"
-      actions={
-        <Button startIcon={<DownloadIcon />} disabled={!report?.rows.length} onClick={download}>
-          CSV
-        </Button>
-      }
+      actions={<Stack direction="row" spacing={1}><Button variant="outlined" startIcon={<DownloadIcon />} disabled={!report?.rows.length} onClick={() => report && downloadTableExcel(`${exportName}.xls`, 'Profit report', exportColumns, report.rows)}>Excel</Button><Button variant="outlined" startIcon={<PictureAsPdfIcon />} disabled={!report?.rows.length} onClick={() => report && downloadTablePdf(`${exportName}.pdf`, 'Profit report', exportColumns, report.rows)}>PDF</Button></Stack>}
     >
       {/*
         A wrong sq.ft per box distorts stock valuation and every per-sq.ft price, so it is

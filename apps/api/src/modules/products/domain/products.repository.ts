@@ -29,6 +29,7 @@ export interface CreateProductData {
   sizeMm: string | null;
   piecesPerBox: number;
   sqftPerBox: number;
+  weightKg: number | null;
   baseUom: ProductUom;
   hsnCode: string;
   gstRate: number;
@@ -51,6 +52,7 @@ export interface UpdateProductData {
   sizeMm?: string | null;
   piecesPerBox?: number;
   sqftPerBox?: number;
+  weightKg?: number | null;
   baseUom?: ProductUom;
   hsnCode?: string;
   gstRate?: number;
@@ -65,6 +67,8 @@ export interface UpdateProductData {
 
 /** Port for product-master persistence. */
 export interface ProductsRepository {
+  /** Next human-readable SKU for a product created inside this ERP. */
+  nextSku(): Promise<string>;
   /** Distinct non-empty sizes present in the catalogue, for filter dropdowns. */
   listSizes(): Promise<string[]>;
   /** Applies purchase/transport/additional rates and recomputes landing cost per row. */

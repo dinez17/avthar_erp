@@ -17,7 +17,7 @@ export class ListUsersHandler implements IQueryHandler<ListUsersQuery, Paginated
 export class ListSalesmenHandler implements IQueryHandler<ListSalesmenQuery, SalesmanItem[]> {
   constructor(@Inject(USERS_REPOSITORY) private readonly users: UsersRepository) {}
 
-  execute(): Promise<SalesmanItem[]> {
-    return this.users.listSalesmen();
+  execute(query: ListSalesmenQuery): Promise<SalesmanItem[]> {
+    return this.users.listSalesmen(query.branchId);
   }
 }

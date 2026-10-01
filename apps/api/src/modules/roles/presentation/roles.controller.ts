@@ -22,6 +22,7 @@ import { CreateRoleCommand } from '../application/commands/create-role.command';
 import { DeleteRoleCommand } from '../application/commands/delete-role.command';
 import { UpdateRoleCommand } from '../application/commands/update-role.command';
 import { ListPermissionsQuery } from '../application/queries/list-permissions.query';
+import { GetRoleQuery } from '../application/queries/get-role.query';
 import { ListRolesQuery } from '../application/queries/list-roles.query';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -47,6 +48,13 @@ export class RolesController {
   @ApiOperation({ summary: 'List every registered permission code' })
   permissions(): Promise<string[]> {
     return this.queryBus.execute(new ListPermissionsQuery());
+  }
+
+  @Get(':id')
+  @RequirePermissions(PERMISSIONS.ROLE_READ)
+  @ApiOperation({ summary: 'Get a role and its permissions' })
+  get(@Param('id', ParseUUIDPipe) id: string): Promise<RoleListItem> {
+    return this.queryBus.execute(new GetRoleQuery(id));
   }
 
   @Post()

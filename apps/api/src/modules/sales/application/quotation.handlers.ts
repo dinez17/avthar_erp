@@ -31,7 +31,7 @@ import {
   type QuotationWriteData,
   type ResolvedQuotationLine,
 } from '../domain/quotation.repository';
-import { walkInRegistration } from './walk-in';
+import { normalisePhone, walkInRegistration } from './walk-in';
 
 const MAX_LINES = 200;
 const round2 = (value: number): number => Math.round(value * 100) / 100;
@@ -41,6 +41,7 @@ export class ListQuotationsQuery {
   constructor(
     public readonly pagination: PaginationQuery,
     public readonly filter: QuotationFilter,
+    public readonly actorId: UUID,
   ) {}
 }
 
@@ -99,8 +100,14 @@ export class ListQuotationsHandler
 {
   constructor(@Inject(QUOTATION_REPOSITORY) private readonly quotations: QuotationRepository) {}
 
-  execute(query: ListQuotationsQuery): Promise<Paginated<QuotationItem>> {
-    return this.quotations.list(query.pagination, query.filter);
+  async execute(query: ListQuotationsQuery): Promise<Paginated<QuotationItem>> {
+    const salesmanUserId = (await this.quotations.isSalesman(query.actorId))
+      ? query.actorId
+      : query.filter.salesmanUserId;
+    return this.quotations.list(query.pagination, {
+      ...query.filter,
+      salesmanUserId,
+    });
   }
 }
 
@@ -284,6 +291,12 @@ export class CreateQuotationHandler
   constructor(@Inject(QUOTATION_REPOSITORY) private readonly quotations: QuotationRepository) {}
 
   async execute(command: CreateQuotationCommand): Promise<QuotationItem> {
+    const linkedMobile = command.data.customerId && !command.data.customerMobile
+      ? (await this.quotations.customerSnapshot(command.data.customerId)).mobile
+      : null;
+    const phone = normalisePhone(command.data.customerMobile || linkedMobile);
+    if (!phone) throw new ValidationError('A 10-digit customer mobile number is required');
+    const matchedCustomer = await this.quotations.customerByPhone(phone);
     const salesmanUserId = await resolveSalesmanUserId(
       this.quotations,
       command.actorId,
@@ -291,7 +304,13 @@ export class CreateQuotationHandler
     );
     const data = await buildQuotationData(
       this.quotations,
-      { ...command.data, salesmanUserId },
+      {
+        ...command.data,
+        customerId: matchedCustomer?.id ?? command.data.customerId,
+        customerName: matchedCustomer?.name ?? command.data.customerName,
+        customerMobile: matchedCustomer?.mobile ?? phone,
+        salesmanUserId,
+      },
       command.rights,
     );
     const number = await this.quotations.nextQuotationNumber(data.branchId);
@@ -308,9 +327,9 @@ export class UpdateQuotationHandler
   async execute(command: UpdateQuotationCommand): Promise<QuotationItem> {
     const existing = await this.quotations.findById(command.id);
     if (!existing) throw new NotFoundError('Quotation not found');
-    if (existing.status !== 'DRAFT') {
+    if (existing.status !== 'DRAFT' && existing.status !== 'SENT') {
       throw new ValidationError(
-        `Only draft quotations can be edited (this one is ${existing.status})`,
+        `Only draft or sent quotations can be edited (this one is ${existing.status})`,
       );
     }
 

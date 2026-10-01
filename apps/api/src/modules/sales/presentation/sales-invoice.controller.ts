@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   HttpCode,
   HttpStatus,
   Param,
@@ -21,14 +22,19 @@ import type {
   Paginated,
   SalesInvoiceItem,
   SalesInvoicePrintData,
+  SalesReturnItem,
   SplitInvoiceResult,
 } from '@tiles-erp/shared-types';
 import type { PricingRights } from '../application/price-guard';
+import { SALES_INVOICE_REPOSITORY, type SalesInvoiceRepository } from '../domain/sales-invoice.repository';
+import { SALES_ORDER_REPOSITORY, type SalesOrderRepository } from '../domain/sales-order.repository';
+import { NotFoundError, ValidationError } from '@tiles-erp/shared';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermissions } from '../../auth/decorators/permissions.decorator';
 import { RequireBranchScope } from '../../auth/decorators/scope.decorator';
 import {
   CancelSalesInvoiceCommand,
+  CreateSalesReturnCommand,
   CreateSalesInvoiceCommand,
   DeleteSalesInvoiceCommand,
   GetSalesInvoiceQuery,
@@ -36,15 +42,19 @@ import {
   ListSalesInvoicesQuery,
   OrderSplitPlanQuery,
   PostSalesInvoiceCommand,
+  PrintDeliverySlipCommand,
   SplitSalesOrderCommand,
   SalesInvoicePrintQuery,
   UpdateSalesInvoiceCommand,
 } from '../application/sales-invoice.handlers';
 import {
   CancelSalesInvoiceDto,
+  CreateSalesReturnDto,
   CreateSalesInvoiceDto,
   InvoiceVersionDto,
   SalesInvoiceListQueryDto,
+  SalesReturnListQueryDto,
+  RefundSalesReturnDto,
   SplitInvoiceDto,
   UpdateSalesInvoiceDto,
 } from './dto/sales-invoice.dto';
@@ -79,7 +89,82 @@ export class SalesInvoiceController {
   constructor(
     private readonly commandBus: CommandBus,
     private readonly queryBus: QueryBus,
+    @Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository,
+    @Inject(SALES_ORDER_REPOSITORY) private readonly orders: SalesOrderRepository,
   ) {}
+
+  @Post('transfer-and-invoice/:salesOrderId')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermissions(PERMISSIONS.SALES_INVOICE_CREATE)
+  @ApiOperation({ summary: 'Transfer reserved stock into the order branch and create its draft invoice' })
+  async transferAndInvoice(
+    @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ invoice: SalesInvoiceItem; transferDocuments: string[] }> {
+    const order = await this.orders.findById(salesOrderId);
+    if (!order) throw new NotFoundError('Sales order not found');
+    const allowed = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')
+      ? null : user.branchIds;
+    if (allowed && !allowed.includes(order.branchId)) {
+      throw new ValidationError('You are not assigned to this order branch');
+    }
+    const transferDocuments = await this.invoices.transferOrderStock(salesOrderId, user.id, allowed);
+    // If the transfer committed but the response was lost, a retry returns the draft
+    // instead of raising another invoice. This also covers a failure between the two steps.
+    const drafts = await this.invoices.list({ page: 1, pageSize: 1 }, {
+      salesOrderId, status: 'DRAFT', branchId: order.branchId,
+    });
+    if (drafts.items.length) return { invoice: drafts.items[0], transferDocuments };
+
+    const invoiceable = await this.invoices.invoiceableLines(salesOrderId);
+    const lines = invoiceable.flatMap((line) => {
+      let remaining = line.pendingQtyBoxes;
+      return line.sources.filter((source) => source.branchId === order.branchId).flatMap((source) => {
+        const qtyBoxes = Math.round(Math.min(remaining, source.qtyBoxes) * 1000) / 1000;
+        remaining = Math.round((remaining - qtyBoxes) * 1000) / 1000;
+        return qtyBoxes > 0 ? [{
+          productId: line.productId,
+          salesOrderLineId: line.salesOrderLineId,
+          godownId: source.godownId,
+          batchNo: source.batchNo,
+          shade: source.shade,
+          boxes: line.baseUom === 'PIECE' ? 0 : Math.floor(qtyBoxes),
+          pieces: line.baseUom === 'PIECE'
+            ? Math.round(qtyBoxes * line.piecesPerBox)
+            : Math.round((qtyBoxes - Math.floor(qtyBoxes)) * line.piecesPerBox),
+          qtyBoxes,
+          rate: line.rate,
+          discountPct: line.discountPct,
+          gstRate: line.gstRate,
+        }] : [];
+      });
+    });
+    if (lines.length === 0) throw new ValidationError('No pending stock is available to invoice');
+    try {
+      const invoice: SalesInvoiceItem = await this.commandBus.execute(new CreateSalesInvoiceCommand({
+        customerId: order.customerId,
+        branchId: order.branchId,
+        salesOrderId,
+        invoiceDate: new Date().toISOString(),
+        freightCharge: order.freightCharge,
+        unloadingCharge: order.unloadingCharge,
+        loadingCharge: order.loadingCharge,
+        roundOff: order.roundOff,
+        remarks: order.remarks ?? undefined,
+        lines,
+      }, user.id, pricingRights(user)));
+      return { invoice, transferDocuments };
+    } catch (error) {
+      if (transferDocuments.length) {
+        throw new ValidationError(
+          `Stock transfer ${transferDocuments.join(', ')} completed, but the draft invoice failed: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }. Retry this action; stock will not be transferred twice.`,
+        );
+      }
+      throw error;
+    }
+  }
 
   @Get('split-plan/:salesOrderId')
   @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
@@ -105,15 +190,55 @@ export class SalesInvoiceController {
   @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
   @RequireBranchScope({ in: 'query' })
   @ApiOperation({ summary: 'List sales invoices, newest first' })
-  list(@Query() query: SalesInvoiceListQueryDto): Promise<Paginated<SalesInvoiceItem>> {
+  list(@Query() query: SalesInvoiceListQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<Paginated<SalesInvoiceItem>> {
     return this.queryBus.execute(
       new ListSalesInvoicesQuery(query, {
         customerId: query.customerId,
         branchId: query.branchId,
+        branchIds: user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') ? undefined : user.branchIds,
         salesOrderId: query.salesOrderId,
         status: query.status,
+        fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
+        toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
       }),
     );
+  }
+
+  @Get('returns')
+  @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
+  @RequireBranchScope({ in: 'query' })
+  @ApiOperation({ summary: 'List posted sales returns, newest first' })
+  listReturns(
+    @Query() query: SalesReturnListQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<Paginated<SalesReturnItem>> {
+    return this.invoices.listReturns(query, {
+      customerId: query.customerId,
+      branchId: query.branchId,
+      branchIds: user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')
+        ? undefined
+        : user.branchIds,
+      fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
+      toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
+    });
+  }
+
+  @Get('returns/:id')
+  @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
+  @ApiOperation({ summary: 'Get a sales return with its returned items' })
+  async getReturn(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SalesReturnItem> {
+    const returned = await this.invoices.findReturnById(id);
+    if (!returned) throw new NotFoundError('Sales return not found');
+    if (
+      !user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') &&
+      !user.branchIds.includes(returned.branchId)
+    ) {
+      throw new NotFoundError('Sales return not found');
+    }
+    return returned;
   }
 
   @Get('invoiceable/:salesOrderId')
@@ -130,6 +255,17 @@ export class SalesInvoiceController {
   @ApiOperation({ summary: 'Invoice with the letterhead, terms and declaration a print needs' })
   print(@Param('id', ParseUUIDPipe) id: string): Promise<SalesInvoicePrintData> {
     return this.queryBus.execute(new SalesInvoicePrintQuery(id));
+  }
+
+  @Post(':id/delivery-slip-print')
+  @RequirePermissions(PERMISSIONS.SALES_INVOICE_READ)
+  @ApiOperation({ summary: 'Issue a delivery slip; regular users are limited to one copy' })
+  printDeliverySlip(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SalesInvoicePrintData> {
+    const allowReprint = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN');
+    return this.commandBus.execute(new PrintDeliverySlipCommand(id, user.id, allowReprint));
   }
 
   @Get(':id')
@@ -186,6 +322,36 @@ export class SalesInvoiceController {
     return this.commandBus.execute(
       new CancelSalesInvoiceCommand(id, dto.version, dto.reason, actorId),
     );
+  }
+
+  @Post(':id/returns')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermissions(PERMISSIONS.SALES_INVOICE_CANCEL)
+  @ApiOperation({ summary: 'Return selected quantities against a posted sales invoice' })
+  createReturn(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateSalesReturnDto,
+    @CurrentUser('id') actorId: string,
+  ): Promise<SalesReturnItem> {
+    return this.commandBus.execute(new CreateSalesReturnCommand(id, dto, actorId));
+  }
+
+  @Post('returns/:id/refunds')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermissions(PERMISSIONS.SALES_INVOICE_CANCEL)
+  @ApiOperation({ summary: 'Pay a customer refund against a posted sales return' })
+  async refundReturn(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RefundSalesReturnDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SalesReturnItem> {
+    const returned = await this.invoices.findReturnById(id);
+    if (!returned) throw new NotFoundError('Sales return not found');
+    if (
+      !user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') &&
+      !user.branchIds.includes(returned.branchId)
+    ) throw new NotFoundError('Sales return not found');
+    return this.invoices.refundReturn(id, dto, user.id);
   }
 
   @Delete(':id')

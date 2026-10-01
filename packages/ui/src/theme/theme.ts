@@ -47,10 +47,37 @@ export const createAppTheme = (mode: PaletteMode): Theme => {
         styleOverrides: {
           // Digits that sit in columns must not jitter as values change.
           '.num, td, th': { fontVariantNumeric: 'tabular-nums' },
+          // Numeric fields use typed values; browser spinner buttons are too easy to
+          // hit accidentally and differ between Chrome and Firefox.
+          'input[type="number"]': { MozAppearance: 'textfield' },
+          'input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button': {
+            WebkitAppearance: 'none',
+            margin: 0,
+          },
           '*::-webkit-scrollbar': { width: 8, height: 8 },
           '*::-webkit-scrollbar-thumb': {
             background: isLight ? '#DFE2EE' : '#363C4F',
             borderRadius: 4,
+          },
+          [base.breakpoints.down('sm')]: {
+            // Filter toolbars across the ERP were designed as compact desktop rows.
+            // On a phone each control needs the available width and the row must wrap.
+            'main .MuiStack-root:has(> .MuiTextField-root), main .MuiStack-root:has(> .MuiAutocomplete-root), .MuiDialogContent-root .MuiStack-root:has(> .MuiTextField-root), .MuiDialogContent-root .MuiStack-root:has(> .MuiAutocomplete-root)': {
+              flexWrap: 'wrap',
+              minWidth: 0,
+            },
+            'main .MuiStack-root > .MuiTextField-root, main .MuiStack-root > .MuiAutocomplete-root, .MuiDialogContent-root .MuiStack-root > .MuiTextField-root, .MuiDialogContent-root .MuiStack-root > .MuiAutocomplete-root': {
+              width: '100% !important',
+              minWidth: '0 !important',
+              maxWidth: 'none !important',
+              flex: '1 1 100%',
+            },
+            // Native tables remain useful in detail dialogs; horizontal scrolling keeps
+            // their columns readable instead of squeezing every value into a few pixels.
+            '.MuiDialogContent-root .MuiTableContainer-root': {
+              maxWidth: '100%',
+              overflowX: 'auto',
+            },
           },
         },
       },
@@ -163,11 +190,67 @@ export const createAppTheme = (mode: PaletteMode): Theme => {
         },
       },
 
-      MuiDialog: { styleOverrides: { paper: { borderRadius: 16, boxShadow: shadow.lg } } },
-      MuiDialogTitle: {
-        styleOverrides: { root: { fontFamily: display, fontWeight: 700, fontSize: '1.05rem' } },
+      MuiDialog: {
+        styleOverrides: {
+          paper: {
+            borderRadius: 16,
+            boxShadow: shadow.lg,
+            [base.breakpoints.down('sm')]: {
+              width: '100%',
+              maxWidth: '100%',
+              height: '100%',
+              maxHeight: '100%',
+              margin: 0,
+              borderRadius: 0,
+            },
+          },
+        },
       },
-      MuiDialogContent: { styleOverrides: { root: { paddingTop: 12, paddingBottom: 12 } } },
+      MuiDialogTitle: {
+        styleOverrides: {
+          root: {
+            fontFamily: display,
+            fontWeight: 700,
+            fontSize: '1.05rem',
+            [base.breakpoints.down('sm')]: { padding: '16px', fontSize: '1.15rem' },
+          },
+        },
+      },
+      MuiDialogContent: {
+        styleOverrides: {
+          root: {
+            paddingTop: 12,
+            paddingBottom: 12,
+            [base.breakpoints.down('sm')]: {
+              padding: '12px 16px 88px',
+              overflowX: 'hidden',
+            },
+          },
+        },
+      },
+      MuiDialogActions: {
+        styleOverrides: {
+          root: {
+            [base.breakpoints.down('sm')]: {
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 2,
+              gap: 8,
+              padding: '8px 12px max(8px, env(safe-area-inset-bottom))',
+              borderTop: `1px solid ${divider}`,
+              background: background.paper,
+              '& > :not(style)': {
+                flex: '1 1 0',
+                minHeight: 48,
+                margin: 0,
+                fontSize: '0.92rem',
+              },
+            },
+          },
+        },
+      },
 
       MuiMenu: { styleOverrides: { paper: { borderRadius: 12, boxShadow: shadow.lg } } },
       MuiTooltip: {

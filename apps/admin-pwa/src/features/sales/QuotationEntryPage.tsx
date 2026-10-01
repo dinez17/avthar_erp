@@ -33,10 +33,12 @@ import type {
 import { useAuth } from '../../auth/AuthProvider';
 import { NO_AUTOFILL } from '../../components/noAutofill';
 import { ApiError } from '../../lib/api-client';
+import { lookupPincode } from '../../lib/pincode';
 import { useProducts } from '../products/api';
 import { useBranches } from '../products/branch-prices-api';
 import {
   useCreateQuotation,
+  useCustomerByPhone,
   useCustomers,
   usePriceHints,
   useQuotation,
@@ -79,7 +81,7 @@ const fromHint = (hint: ProductPriceHint): LineProduct => ({
   baseUom: hint.baseUom,
   mrp: hint.mrp,
   gstRate: hint.gstRate,
-  sellingRate: hint.sellingPrice,
+  sellingRate: hint.sellingPrice === null ? null : round2(hint.sellingPrice * (1 + hint.gstRate / 100)),
 });
 
 /** The catalogue is searched on the server, so only a page of matches is fetched. */
@@ -126,6 +128,8 @@ const defaultValidUntil = (): string => {
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+const round8 = (value: number): number => Math.round(value * 100_000_000) / 100_000_000;
+const includeGst = (rate: number, gstRate: number): number => round2(rate * (1 + gstRate / 100));
 
 /**
  * Counter-style quotation entry: customer details on top, a code-driven line grid,
@@ -139,8 +143,12 @@ export function QuotationEntryPage(): JSX.Element {
   const existing = useQuotation(id ?? null);
   const customers = useCustomers();
   const branches = useBranches();
-  const salesmen = useSalesmen();
   const { user } = useAuth();
+  const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
+  const availableBranches = useMemo(
+    () => (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id)),
+    [branches.data, canChangeBranch, user?.branchIds],
+  );
   const createQuotation = useCreateQuotation();
   const updateQuotation = useUpdateQuotation();
 
@@ -148,8 +156,14 @@ export function QuotationEntryPage(): JSX.Element {
   const [customerName, setCustomerName] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
+  const [customerPincode, setCustomerPincode] = useState('');
+  const [customerCity, setCustomerCity] = useState('');
+  const [customerState, setCustomerState] = useState('');
+  const [pincodeMessage, setPincodeMessage] = useState('Enter PIN code first to fill city and state');
+  const matchedCustomer = useCustomerByPhone(customerMobile);
   const [salesmanUserId, setSalesmanUserId] = useState('');
   const [branchId, setBranchId] = useState('');
+  const salesmen = useSalesmen(branchId || undefined);
   const [quotationDate, setQuotationDate] = useState(() => isoDate(new Date()));
   const [validUntil, setValidUntil] = useState(defaultValidUntil);
   const [freight, setFreight] = useState('0');
@@ -159,6 +173,30 @@ export function QuotationEntryPage(): JSX.Element {
   const [remarks, setRemarks] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([blankLine]);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isEdit || !matchedCustomer.data) return;
+    setCustomerId(matchedCustomer.data.id);
+    setCustomerName(matchedCustomer.data.name);
+    setCustomerPincode(matchedCustomer.data.pincode ?? '');
+    setCustomerCity(matchedCustomer.data.city ?? '');
+    setCustomerState(matchedCustomer.data.state ?? '');
+  }, [isEdit, matchedCustomer.data]);
+
+  useEffect(() => {
+    if (!/^\d{6}$/.test(customerPincode)) return;
+    const timer = window.setTimeout(() => {
+      setPincodeMessage('Looking up PIN code…');
+      void lookupPincode(customerPincode).then(({ city, state }) => {
+        setCustomerCity(city);
+        setCustomerState(state);
+        setPincodeMessage('City and state filled automatically; you can edit them');
+      }).catch((lookupError: unknown) => {
+        setPincodeMessage(lookupError instanceof Error ? lookupError.message : 'Enter city and state manually');
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [customerPincode]);
 
   // The item picker searches the server so the whole catalogue never has to be loaded.
   const [itemSearch, setItemSearch] = useState('');
@@ -241,7 +279,7 @@ export function QuotationEntryPage(): JSX.Element {
         if (!line.productId || line.rateEdited) return line;
         const price = priceByProduct.get(line.productId);
         if (price === undefined || price === null) return line;
-        const rate = String(price);
+        const rate = String(includeGst(price, Number(line.gstRate || 0)));
         if (line.rate === rate) return line;
         changed = true;
         return { ...line, rate };
@@ -276,7 +314,7 @@ export function QuotationEntryPage(): JSX.Element {
         pieces: String(line.pieces),
         mrp: line.mrp === null ? '' : String(line.mrp),
         discountPct: String(line.discountPct),
-        rate: String(line.rate),
+        rate: String(includeGst(line.rate, line.gstRate)),
         gstRate: String(line.gstRate),
       })).concat(blankLine),
     );
@@ -284,8 +322,8 @@ export function QuotationEntryPage(): JSX.Element {
 
   // A logged-in salesperson always credits themselves; the picker is locked for them.
   const isSalesUser = useMemo(
-    () => Boolean(user && (salesmen.data ?? []).some((s) => s.id === user.id)),
-    [salesmen.data, user],
+    () => Boolean(branchId && user && (salesmen.data ?? []).some((s) => s.id === user.id)),
+    [branchId, salesmen.data, user],
   );
 
   useEffect(() => {
@@ -294,12 +332,20 @@ export function QuotationEntryPage(): JSX.Element {
     }
   }, [isSalesUser, user, salesmanUserId]);
 
-  // Default to the only branch when there is just one.
   useEffect(() => {
-    if (!branchId && (branches.data?.length ?? 0) === 1) {
-      setBranchId(branches.data![0]!.id);
+    if (branchId && salesmen.isSuccess && salesmanUserId &&
+        !salesmen.data.some((person) => person.id === salesmanUserId)) {
+      setSalesmanUserId('');
     }
-  }, [branches.data, branchId]);
+  }, [branchId, salesmen.isSuccess, salesmen.data, salesmanUserId]);
+
+  // Existing quotations retain their saved branch; new quotations use assigned access.
+  useEffect(() => {
+    if (isEdit || branchId) return;
+    if (availableBranches.length === 1 || (!canChangeBranch && availableBranches.length > 0)) {
+      setBranchId(availableBranches[0]!.id);
+    }
+  }, [availableBranches, branchId, canChangeBranch, isEdit]);
 
   const setLine = (index: number, patch: Partial<DraftLine>): void =>
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
@@ -317,7 +363,9 @@ export function QuotationEntryPage(): JSX.Element {
       code: product.sku,
       mrp: product.mrp !== null ? String(product.mrp) : '',
       gstRate: String(product.gstRate),
-      rate: String(hint?.sellingPrice ?? product.sellingRate ?? ''),
+      rate: String(hint?.sellingPrice === null || hint?.sellingPrice === undefined
+        ? (product.sellingRate ?? '')
+        : includeGst(hint.sellingPrice, product.gstRate)),
       rateEdited: false,
       // A piece-only product has no box quantity to enter.
       ...(product.baseUom === 'PIECE' ? { boxes: '' } : {}),
@@ -348,10 +396,11 @@ export function QuotationEntryPage(): JSX.Element {
     const boxes = pieceOnly ? 0 : Number(line.boxes || 0);
     const pieces = Number(line.pieces || 0);
     const qtyBoxes = round3(boxes + (piecesPerBox > 0 ? pieces / piecesPerBox : 0));
-    const rate = Number(line.rate || 0);
+    const inclusiveRate = Number(line.rate || 0);
     const discount = Number(line.discountPct || 0);
     const hint = hintByProduct.get(line.productId);
     const gst = Number(line.gstRate || hint?.gstRate || 0);
+    const rate = gst > 0 ? inclusiveRate / (1 + gst / 100) : inclusiveRate;
     const amounts = calculatePurchaseLine(qtyBoxes, rate, discount, gst);
     const freeQtyBoxes = line.productId ? (freeByProduct.get(line.productId) ?? 0) : 0;
     const shortQtyBoxes = round3(Math.max(qtyBoxes - freeQtyBoxes, 0));
@@ -423,6 +472,14 @@ export function QuotationEntryPage(): JSX.Element {
       setError('Enter a customer name');
       return;
     }
+    if (!isEdit && customerMobile.replace(/\D/g, '').length < 10) {
+      setError('Enter a 10-digit customer mobile number');
+      return;
+    }
+    if (!isEdit && (!/^\d{6}$/.test(customerPincode) || !customerCity.trim() || !customerState.trim())) {
+      setError('PIN code, city and state are required');
+      return;
+    }
 
     const payload: QuotationLineInput[] = [];
     for (const [index, line] of lines.entries()) {
@@ -437,7 +494,7 @@ export function QuotationEntryPage(): JSX.Element {
         boxes: entry.pieceOnly ? 0 : Number(line.boxes || 0),
         pieces: Number(line.pieces || 0),
         mrp: line.mrp ? Number(line.mrp) : undefined,
-        rate: Number(line.rate || 0),
+        rate: round8(Number(line.rate || 0) / (1 + Number(line.gstRate || entry.hint?.gstRate || 0) / 100)),
         discountPct: Number(line.discountPct || 0),
         ...(line.gstRate ? { gstRate: Number(line.gstRate) } : {}),
       });
@@ -450,7 +507,8 @@ export function QuotationEntryPage(): JSX.Element {
     const body = {
       customerId: customerId || null,
       customerName: customerName.trim() || undefined,
-      customerAddress: customerAddress.trim() || undefined,
+      customerAddress: [customerAddress.trim(), customerCity.trim(), customerState.trim(), customerPincode]
+        .filter(Boolean).join(', ') || undefined,
       customerMobile: customerMobile.trim() || undefined,
       salesmanUserId: salesmanUserId || undefined,
       branchId,
@@ -491,10 +549,15 @@ export function QuotationEntryPage(): JSX.Element {
     color: 'text.secondary',
     bgcolor: 'action.hover',
   };
-  // One shared density rule keeps every field on a single tight line.
+  // Keep desktop rows compact while giving phone users large, reliable touch targets.
   const field = {
-    '& .MuiInputBase-root': { fontSize: 13 },
-    '& .MuiInputBase-input': { py: 0.75, px: 1 },
+    '& .MuiInputBase-root': {
+      fontSize: { xs: 16, sm: 13 },
+      minHeight: { xs: 48, sm: 'auto' },
+    },
+    '& .MuiInputBase-input': { py: { xs: 1.25, sm: 0.75 }, px: 1.25 },
+    '& .MuiInputLabel-root': { fontSize: { xs: 15, sm: 13 } },
+    '& .MuiFormHelperText-root': { mx: 0.5, fontSize: 12 },
   };
   // Money and quantity columns read as a column of figures, so they align right.
   const numberField = { ...field, '& input': { textAlign: 'right' } };
@@ -507,8 +570,12 @@ export function QuotationEntryPage(): JSX.Element {
       title={isEdit ? `Edit ${existing.data?.quotationNumber ?? 'quotation'}` : 'Quotation'}
       subtitle="Counter quotation: enter the customer, add items by code, then charges."
       actions={
-        <Stack direction="row" spacing={1}>
-          <Button color="inherit" onClick={() => navigate('/quotations')}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ display: { xs: 'none', sm: 'flex' }, width: 'auto' }}
+        >
+          <Button variant="outlined" color="inherit" sx={{ flex: { xs: 1, sm: 'initial' } }} onClick={() => navigate('/quotations')}>
             Cancel
           </Button>
           <Tooltip
@@ -518,21 +585,22 @@ export function QuotationEntryPage(): JSX.Element {
                 : ''
             }
           >
-            <span>
+            <Box component="span" sx={{ flex: { xs: 1, sm: 'initial' } }}>
               <Button
                 variant="contained"
                 startIcon={<SaveIcon />}
+                fullWidth
                 onClick={() => void save()}
                 disabled={pending || underMin.length > 0}
               >
                 {pending ? 'Saving…' : 'Save'}
               </Button>
-            </span>
+            </Box>
           </Tooltip>
         </Stack>
       }
     >
-      <Stack spacing={1}>
+      <Stack spacing={{ xs: 1.25, sm: 1 }} sx={{ pb: { xs: 10, sm: 0 } }}>
         {error && (
           <Alert severity="error" sx={{ py: 0 }}>
             {error}
@@ -545,7 +613,7 @@ export function QuotationEntryPage(): JSX.Element {
             {underMin
               .map(
                 (entry) =>
-                  `${entry.product?.sku ?? 'a line'} at ${entry.netRate.toLocaleString('en-IN')} against a minimum of ${entry.hint?.minSellingPrice?.toLocaleString('en-IN')}`,
+                  `${entry.product?.sku ?? 'a line'} at ${includeGst(entry.netRate, Number(entry.hint?.gstRate || 0)).toLocaleString('en-IN')} against a minimum of ${includeGst(entry.hint?.minSellingPrice ?? 0, Number(entry.hint?.gstRate || 0)).toLocaleString('en-IN')} incl GST`,
               )
               .join('; ')}
             . Raise the rate, or reduce the discount.
@@ -569,21 +637,28 @@ export function QuotationEntryPage(): JSX.Element {
           </Alert>
         )}
 
-        <Paper variant="outlined" sx={{ p: 1.25 }}>
+        <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 1.5 }, borderRadius: { xs: 2, sm: 1 } }}>
+          <Typography
+            variant="subtitle1"
+            fontWeight={700}
+            sx={{ display: { xs: 'block', sm: 'none' }, mb: 1.25 }}
+          >
+            Customer details
+          </Typography>
           <Box
             sx={{
               display: 'grid',
-              gap: 1,
+              gap: { xs: 1.25, sm: 1 },
               alignItems: 'start',
               gridTemplateColumns: {
-                xs: '1fr',
+                xs: 'minmax(0, 1fr)',
                 sm: 'repeat(2, 1fr)',
                 md: 'repeat(4, 1fr)',
               },
             }}
           >
             <Autocomplete
-              sx={{ gridColumn: { sm: 'span 2' } }}
+              sx={{ gridColumn: { xs: '1 / -1', sm: 'span 2' } }}
               freeSolo
               size="small"
               options={customers.data ?? []}
@@ -602,8 +677,11 @@ export function QuotationEntryPage(): JSX.Element {
                   setCustomerId(value.id);
                   setCustomerName(value.name);
                   setCustomerMobile(value.phone ?? '');
+                  setCustomerPincode(value.pincode ?? '');
+                  setCustomerCity(value.city ?? '');
+                  setCustomerState(value.state ?? '');
                   setCustomerAddress(
-                    [value.addressLine1, value.addressLine2, value.city]
+                    [value.addressLine1, value.addressLine2]
                       .filter(Boolean)
                       .join(', '),
                   );
@@ -639,12 +717,17 @@ export function QuotationEntryPage(): JSX.Element {
             />
 
             <TextField
-              label="Customer mobile"
+              label="Customer mobile *"
               size="small"
-              sx={{ ...field, gridColumn: { sm: 'span 2' } }}
               value={customerMobile}
-              onChange={(e) => setCustomerMobile(e.target.value)}
-              inputProps={NO_AUTOFILL}
+              onChange={(e) => {
+                setCustomerMobile(e.target.value);
+                setCustomerId('');
+              }}
+              required={!isEdit}
+              fullWidth
+              sx={{ ...field, gridColumn: { xs: '1 / -1', sm: 'span 2' } }}
+              inputProps={{ ...NO_AUTOFILL, inputMode: 'tel' }}
             />
             <TextField
               select
@@ -652,9 +735,11 @@ export function QuotationEntryPage(): JSX.Element {
               size="small"
               sx={field}
               value={branchId}
+              disabled={!canChangeBranch && availableBranches.length === 0}
+              helperText={!canChangeBranch && !availableBranches.length ? 'No branch assigned. Contact your administrator.' : undefined}
               onChange={(e) => setBranchId(e.target.value)}
             >
-              {(branches.data ?? []).map((b) => (
+              {availableBranches.map((b) => (
                 <MenuItem key={b.id} value={b.id}>
                   {b.name}
                 </MenuItem>
@@ -667,13 +752,13 @@ export function QuotationEntryPage(): JSX.Element {
               sx={field}
               value={salesmanUserId}
               onChange={(e) => setSalesmanUserId(e.target.value)}
-              disabled={isSalesUser}
+              disabled={isSalesUser || !branchId || salesmen.isFetching}
               title={isSalesUser ? 'Quotations are credited to you' : undefined}
             >
               <MenuItem value="">
                 <em>None</em>
               </MenuItem>
-              {(salesmen.data ?? []).map((person) => (
+              {(branchId ? salesmen.data ?? [] : []).map((person) => (
                 <MenuItem key={person.id} value={person.id}>
                   {person.name}
                 </MenuItem>
@@ -681,10 +766,40 @@ export function QuotationEntryPage(): JSX.Element {
             </TextField>
 
             <TextField
+              label="PIN code *"
+              size="small"
+              value={customerPincode}
+              onChange={(e) => setCustomerPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              helperText={pincodeMessage}
+              required={!isEdit}
+              sx={field}
+              inputProps={{ ...NO_AUTOFILL, inputMode: 'numeric', maxLength: 6 }}
+            />
+            <TextField
+              label="City *"
+              size="small"
+              value={customerCity}
+              onChange={(e) => setCustomerCity(e.target.value)}
+              required={!isEdit}
+              sx={field}
+              inputProps={NO_AUTOFILL}
+            />
+            <TextField
+              label="State *"
+              size="small"
+              value={customerState}
+              onChange={(e) => setCustomerState(e.target.value)}
+              required={!isEdit}
+              sx={{ ...field, gridColumn: { xs: '1 / -1', sm: 'span 2' } }}
+              inputProps={NO_AUTOFILL}
+            />
+
+            <TextField
               label="Customer address"
               size="small"
               multiline
               minRows={2}
+              maxRows={3}
               sx={{ ...field, gridColumn: '1 / -1' }}
               value={customerAddress}
               onChange={(e) => setCustomerAddress(e.target.value)}
@@ -693,10 +808,151 @@ export function QuotationEntryPage(): JSX.Element {
           </Box>
         </Paper>
 
-        <Paper variant="outlined">
+        <Paper variant="outlined" sx={{ overflow: 'hidden', borderRadius: { xs: 2, sm: 1 } }}>
+          <Typography
+            variant="subtitle1"
+            fontWeight={700}
+            sx={{ display: { xs: 'block', md: 'none' }, px: 1.5, pt: 1.5 }}
+          >
+            Items
+          </Typography>
+          <Stack spacing={1.25} sx={{ display: { xs: 'flex', md: 'none' }, p: 1.25 }}>
+            {lines.map((line, index) => {
+              const entry = computed[index]!;
+              const product = entry.product;
+              return (
+                <Paper key={index} variant="outlined" sx={{ p: 1.25, bgcolor: 'background.paper', borderRadius: 2 }}>
+                  <Stack spacing={1.25}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between">
+                      <Typography variant="subtitle1" fontWeight={700}>
+                        Item {index + 1}
+                      </Typography>
+                      <IconButton
+                        size="small" color="error"
+                        aria-label={`Remove item ${index + 1}`}
+                        onClick={() => setLines((prev) => prev.filter((_, i) => i !== index))}
+                        disabled={lines.length === 1}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0, 1fr)',
+                        gap: 1.25,
+                      }}
+                    >
+                      <TextField
+                        size="small"
+                        label="SKU / code"
+                        fullWidth
+                        sx={field}
+                        value={line.code || product?.sku || ''}
+                        onChange={(event) => {
+                          setLine(index, { code: event.target.value, productId: '' });
+                          setItemSearch(event.target.value);
+                        }}
+                        inputProps={NO_AUTOFILL}
+                      />
+                      <Autocomplete
+                        size="small"
+                        fullWidth
+                        options={productOptions}
+                        filterOptions={(option) => option}
+                        loading={products.isFetching}
+                        noOptionsText={products.isFetching ? 'Searching…' : 'No item matches that search'}
+                        getOptionLabel={(option) => option.name}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
+                        value={product ?? null}
+                        onChange={(_, value) => applyProduct(index, value ?? undefined)}
+                        onInputChange={(_, value, reason) => {
+                          if (reason === 'input') setItemSearch(value);
+                        }}
+                        sx={{ ...field, minWidth: 0, '& .MuiAutocomplete-inputRoot': { py: '2px !important' } }}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Item"
+                            placeholder="Search and select item"
+                            inputProps={{ ...params.inputProps, ...NO_AUTOFILL }}
+                          />
+                        )}
+                      />
+                    </Box>
+
+                    {product && (
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                          gap: 0.25,
+                          px: 0.25,
+                        }}
+                      >
+                        <Typography variant="caption">Size: {product.sizeMm || '—'}</Typography>
+                        <Typography variant="caption">PCS/box: {product.piecesPerBox}</Typography>
+                        <Typography
+                          variant="caption"
+                          color={entry.shortQtyBoxes > 0 ? 'error.main' : 'text.secondary'}
+                          fontWeight={entry.shortQtyBoxes > 0 ? 700 : 400}
+                        >
+                          Free: {formatBoxPieces(entry.freeQtyBoxes, product.piecesPerBox, product.baseUom === 'PIECE')}
+                        </Typography>
+                        <Typography variant="caption">MRP: {line.mrp ? money(Number(line.mrp)) : '—'}</Typography>
+                      </Box>
+                    )}
+
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                        gap: 1.25,
+                      }}
+                    >
+                      <TextField
+                        label="Boxes" size="small" type="number" sx={numberField}
+                        value={entry.pieceOnly ? '' : line.boxes} disabled={entry.pieceOnly}
+                        onChange={(event) => setLine(index, { boxes: event.target.value })}
+                        onBlur={() => { if (!line.boxes.trim()) setLine(index, { boxes: '0' }); }}
+                        inputProps={{ min: 0, inputMode: 'decimal' }}
+                      />
+                      <TextField
+                        label="Pieces" size="small" type="number" sx={numberField}
+                        value={line.pieces}
+                        onChange={(event) => setLine(index, { pieces: event.target.value })}
+                        onBlur={() => { if (!line.pieces.trim()) setLine(index, { pieces: '0' }); }}
+                        inputProps={{ min: 0, inputMode: 'decimal' }}
+                      />
+                      <TextField
+                        label="Rate incl GST" size="small" type="number" sx={numberField}
+                        error={entry.belowMin}
+                        value={line.rate}
+                        onChange={(event) => setLine(index, { rate: event.target.value, rateEdited: true })}
+                        inputProps={{ min: 0, inputMode: 'decimal' }}
+                      />
+                      <TextField
+                        label="Discount %" size="small" type="number" sx={numberField}
+                        error={entry.belowMin}
+                        value={line.discountPct}
+                        onChange={(event) => setLine(index, { discountPct: event.target.value })}
+                        inputProps={{ min: 0, max: 100, inputMode: 'decimal' }}
+                      />
+                    </Box>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between">
+                      <Typography variant="body2" color="text.secondary">Line total</Typography>
+                      <Typography variant="h6" fontWeight={700}>{money(entry.lineTotal)}</Typography>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              );
+            })}
+          </Stack>
+
+          <Box sx={{ display: { xs: 'none', md: 'block' }, overflowX: 'auto' }}>
           <Table
             size="small"
-            sx={{ tableLayout: 'fixed', '& td, & th': { whiteSpace: 'nowrap' } }}
+            sx={{ minWidth: 1120, tableLayout: 'fixed', '& td, & th': { whiteSpace: 'nowrap' } }}
           >
             <TableHead>
               <TableRow>
@@ -706,10 +962,10 @@ export function QuotationEntryPage(): JSX.Element {
                 <TableCell sx={{ ...headCell, width: 72 }} align="right">PCS/BOX</TableCell>
                 <TableCell sx={{ ...headCell, width: 100 }} align="right">FREE STOCK</TableCell>
                 <TableCell sx={{ ...headCell, width: 88 }} align="right">MRP</TableCell>
-                <TableCell sx={{ ...headCell, width: 74 }} align="right">DISC %</TableCell>
                 <TableCell sx={{ ...headCell, width: 74 }} align="right">BOX</TableCell>
                 <TableCell sx={{ ...headCell, width: 74 }} align="right">PCS</TableCell>
-                <TableCell sx={{ ...headCell, width: 100 }} align="right">RATE</TableCell>
+                <TableCell sx={{ ...headCell, width: 110 }} align="right">RATE INCL GST</TableCell>
+                <TableCell sx={{ ...headCell, width: 74 }} align="right">DISC %</TableCell>
                 <TableCell sx={{ ...headCell, width: 115 }} align="right">
                   TOTAL
                 </TableCell>
@@ -794,20 +1050,10 @@ export function QuotationEntryPage(): JSX.Element {
                         fullWidth
                         type="number"
                         sx={numberField}
-                        error={entry.belowMin}
-                        value={line.discountPct}
-                        onChange={(e) => setLine(index, { discountPct: e.target.value })}
-                      />
-                    </TableCell>
-                    <TableCell sx={cell}>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        type="number"
-                        sx={numberField}
                         value={entry.pieceOnly ? '' : line.boxes}
                         disabled={entry.pieceOnly}
                         onChange={(e) => setLine(index, { boxes: e.target.value })}
+                        onBlur={() => { if (!line.boxes.trim()) setLine(index, { boxes: '0' }); }}
                       />
                     </TableCell>
                     <TableCell sx={cell}>
@@ -818,6 +1064,7 @@ export function QuotationEntryPage(): JSX.Element {
                         sx={numberField}
                         value={line.pieces}
                         onChange={(e) => setLine(index, { pieces: e.target.value })}
+                        onBlur={() => { if (!line.pieces.trim()) setLine(index, { pieces: '0' }); }}
                       />
                     </TableCell>
                     <TableCell sx={cell}>
@@ -827,9 +1074,20 @@ export function QuotationEntryPage(): JSX.Element {
                         type="number"
                         sx={numberField}
                         error={entry.belowMin}
-                        title={entry.belowMin ? `Minimum ${entry.hint?.minSellingPrice}` : undefined}
+                        title={entry.belowMin ? `Minimum ${includeGst(entry.hint?.minSellingPrice ?? 0, Number(line.gstRate || entry.hint?.gstRate || 0))} incl GST` : undefined}
                         value={line.rate}
                         onChange={(e) => setLine(index, { rate: e.target.value, rateEdited: true })}
+                      />
+                    </TableCell>
+                    <TableCell sx={cell}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        type="number"
+                        sx={numberField}
+                        error={entry.belowMin}
+                        value={line.discountPct}
+                        onChange={(e) => setLine(index, { discountPct: e.target.value })}
                       />
                     </TableCell>
                     <TableCell sx={cell} align="right">
@@ -852,9 +1110,12 @@ export function QuotationEntryPage(): JSX.Element {
               })}
             </TableBody>
           </Table>
-          <Box sx={{ px: 1, py: 0.5 }}>
+          </Box>
+          <Box sx={{ px: { xs: 1.25, md: 1 }, pb: { xs: 1.25, md: 0.5 }, pt: 0 }}>
             <Button
               size="small"
+              variant="outlined"
+              sx={{ width: { xs: '100%', md: 'auto' }, minHeight: { xs: 46, md: 'auto' }, fontSize: { xs: 15, md: 'inherit' } }}
               startIcon={<AddIcon />}
               onClick={() => setLines((prev) => [...prev, blankLine])}
             >
@@ -863,22 +1124,30 @@ export function QuotationEntryPage(): JSX.Element {
           </Box>
         </Paper>
 
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems="flex-start">
-          <Paper variant="outlined" sx={{ p: 1, flex: 1 }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 1.25, md: 1 }} alignItems="flex-start">
+          <Paper variant="outlined" sx={{ p: { xs: 1.25, sm: 1 }, flex: 1, width: '100%', borderRadius: { xs: 2, sm: 1 } }}>
             <TextField
               label="Remarks"
               size="small"
               fullWidth
               multiline
               minRows={2}
+              maxRows={3}
               sx={field}
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
             />
           </Paper>
 
-          <Paper variant="outlined" sx={{ p: 1, width: { md: 330 } }}>
-            <Stack spacing={0.5}>
+          <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 1 }, width: { xs: '100%', md: 330 }, borderRadius: { xs: 2, sm: 1 } }}>
+            <Typography
+              variant="subtitle1"
+              fontWeight={700}
+              sx={{ display: { xs: 'block', md: 'none' }, mb: 1.25 }}
+            >
+              Charges and total
+            </Typography>
+            <Stack spacing={{ xs: 1, sm: 0.5 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center">
                 <Typography variant="caption">Auto freight</Typography>
                 <TextField
@@ -887,7 +1156,7 @@ export function QuotationEntryPage(): JSX.Element {
                   fullWidth={false}
                   value={freight}
                   onChange={(e) => setFreight(e.target.value)}
-                  sx={{ ...numberField, width: 120 }}
+                  sx={{ ...numberField, width: { xs: 150, sm: 120 } }}
                 />
               </Stack>
               <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -898,7 +1167,7 @@ export function QuotationEntryPage(): JSX.Element {
                   fullWidth={false}
                   value={unloading}
                   onChange={(e) => setUnloading(e.target.value)}
-                  sx={{ ...numberField, width: 120 }}
+                  sx={{ ...numberField, width: { xs: 150, sm: 120 } }}
                 />
               </Stack>
               <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -909,7 +1178,7 @@ export function QuotationEntryPage(): JSX.Element {
                   fullWidth={false}
                   value={loading}
                   onChange={(e) => setLoading(e.target.value)}
-                  sx={{ ...numberField, width: 120 }}
+                  sx={{ ...numberField, width: { xs: 150, sm: 120 } }}
                 />
               </Stack>
               <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -920,7 +1189,7 @@ export function QuotationEntryPage(): JSX.Element {
                   fullWidth={false}
                   value={roundOff}
                   onChange={(e) => setRoundOff(e.target.value)}
-                  sx={{ ...numberField, width: 120 }}
+                  sx={{ ...numberField, width: { xs: 150, sm: 120 } }}
                 />
               </Stack>
 
@@ -949,6 +1218,44 @@ export function QuotationEntryPage(): JSX.Element {
             </Stack>
           </Paper>
         </Stack>
+
+        <Paper
+          elevation={8}
+          sx={{
+            display: { xs: 'block', sm: 'none' },
+            position: 'fixed',
+            zIndex: (theme) => theme.zIndex.appBar,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            px: 1,
+            pt: 1,
+            pb: 'max(8px, env(safe-area-inset-bottom))',
+            borderRadius: 0,
+            borderTop: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              color="inherit"
+              sx={{ flex: 1, minHeight: 48, fontSize: 15 }}
+              onClick={() => navigate('/quotations')}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<SaveIcon />}
+              sx={{ flex: 1, minHeight: 48, fontSize: 15 }}
+              onClick={() => void save()}
+              disabled={pending || underMin.length > 0}
+            >
+              {pending ? 'Saving…' : 'Save quotation'}
+            </Button>
+          </Stack>
+        </Paper>
       </Stack>
     </PageContainer>
   );

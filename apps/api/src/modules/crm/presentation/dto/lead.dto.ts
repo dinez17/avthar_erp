@@ -76,11 +76,19 @@ export class CreateLeadDto {
   @IsOptional()
   email?: string;
 
-  @ApiPropertyOptional({ example: 'Chennai' })
+  @ApiProperty({ example: 'Chennai' })
   @IsString()
   @MaxLength(100)
-  @IsOptional()
-  city?: string;
+  city!: string;
+
+  @ApiProperty({ example: 'Tamil Nadu' })
+  @IsString()
+  @MaxLength(100)
+  state!: string;
+
+  @ApiProperty({ example: '624001' })
+  @Matches(/^\d{6}$/, { message: 'pincode must be a 6-digit PIN code' })
+  pincode!: string;
 
   @ApiPropertyOptional({ enum: SOURCES, default: 'WALK_IN' })
   @IsIn(SOURCES)

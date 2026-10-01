@@ -30,14 +30,7 @@ export const SIXORBIT_MEASUREMENT = {
   PIECES: '27',
   /** `measured_meaid: "10"`, label SQFT — the unit an area is quoted in. */
   SQFT: '10',
-  /**
-   * Label Box.
-   *
-   * NOT what `package_meaid` takes, despite the name suggesting it. Their
-   * `variation/edit_variation_submit` sample sends `package_meaid: "27"` — pieces —
-   * because `package_qty` counts the pieces in a package, not the boxes. Kept for the
-   * import side, where a box-quoted figure does appear.
-   */
+  /** `meaid: "40"`, label BOX — the distinct packing unit required on variation adds. */
   BOX: '40',
 } as const;
 
@@ -52,6 +45,8 @@ export interface SixOrbitPushInput {
   gstRate: number;
   sellingRate: number | null;
   purchaseRate: number | null;
+  /** GST-inclusive branch franchisee rate, sent as SixOrbit's dealer price. */
+  franchiseeRate: number | null;
   mrp: number | null;
   piecesPerBox: number;
   sqftPerBox: number;
@@ -112,23 +107,13 @@ export const sqftPerPiece = (sqftPerBox: number, piecesPerBox: number): number =
  * except giving the validator something to object to.
  */
 export const CARRIED_FORWARD = [
-  // Their e-commerce linkage. We neither set nor understand it, so on an edit it is
-  // preserved exactly as they gave it to us — dropping it from a form submit is how a
-  // field silently gets cleared.
-  'e_commerce_id',
   'company',
   'default_vendor',
   'dealer_price',
-  'min_discount',
-  'max_discount',
   'weight',
   'incentive',
-  'item_cess',
   'profitability',
-  'shelf',
-  'material',
   'pcount',
-  'pcount_qty',
   'fixed_price',
   'rack_code',
   'images',
@@ -164,6 +149,7 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     item_tax: String(input.gstRate),
     price: money(input.sellingRate),
     purchase_price: money(input.purchaseRate),
+    ...(input.franchiseeRate !== null ? { dealer_price: money(input.franchiseeRate) } : {}),
     mrp: money(input.mrp),
     package_qty: String(input.piecesPerBox),
     measurements: String(sqftPerPiece(input.sqftPerBox, input.piecesPerBox)),
@@ -171,40 +157,28 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     measurement_unit: SIXORBIT_MEASUREMENT.SQFT,
     pcount_meaid: SIXORBIT_MEASUREMENT.PIECES,
     pc_meaid: SIXORBIT_MEASUREMENT.SQFT,
-    // The unit `package_qty` is counted in. We send a piece count, so this is pieces —
-    // their own edit sample pairs `package_qty` with `package_meaid: "27"`. Omitting it
-    // left the unit to whatever their form defaulted to, which is not ours to assume.
-    package_meaid: SIXORBIT_MEASUREMENT.PIECES,
     barcode: input.barcode ?? '',
     brand: input.brandSixorbitId ?? '',
     categories: [{ id: input.categorySixorbitId ?? '' }],
     attributes: input.attributes.map((a) => ({ aid: a.aid, avid: a.avid })),
   };
 
-  /**
-   * Every field their edit form expects, at a neutral value.
-   *
-   * These are DEFAULTS, not decoration: SixOrbit supplied the required field list on
-   * 2026-09-08, and a field we leave out is simply absent from the form submit. Relying
-   * on CARRIED_FORWARD for them was the mistake — that only preserves what the imported
-   * record already had, so a product whose SixOrbit row had no `shelf` or `min_discount`
-   * silently posted an incomplete form. An edit still lays their own values over these,
-   * so a default only applies where they have told us nothing.
-   *
-   * Values are neutral rather than invented. We do not model shelf, material, cess or
-   * discount ceilings, and guessing at them would write fiction into their catalogue.
-   */
-  const defaults: Record<string, unknown> = {
-    item_type: 'Closed Stock',
-    product_type: 'Product',
-    item_service: '0',
+  /** Add-form fields that ERP does not model, with neutral values. */
+  const createDefaults: Record<string, unknown> = {
+    // The add validator requires base, measured and packing units to be distinct:
+    // PCS (27), SQFT (10) and BOX (40).
+    package_meaid: SIXORBIT_MEASUREMENT.BOX,
     fixed_price: ['0'],
     pcount: ['1'],
     images: [],
     company: '',
     default_vendor: '',
     rack_code: '',
-    // Their e-commerce linkage. Empty unless the imported record carried one.
+    dealer_price: '0.00',
+    weight: '0.00000000',
+    incentive: '0.00000000',
+    profitability: '0.00000000',
+    // New ERP products have no SixOrbit e-commerce link yet.
     e_commerce_id: '',
     // Discount ceilings and cess: not modelled here, so left clear rather than guessed.
     min_discount: '',
@@ -215,22 +189,32 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     material: '',
     // Pairs with `pcount: ['1']`, so one unit per count.
     pcount_qty: '1',
-    // Present in their edit form and sent as "0" there. Meaning undocumented — they
-    // look like flags for "this is the default unit / the default price basis". Sent
-    // as their own sample sends them rather than guessed at.
+    // The add request supplied by SixOrbit sends both base flags as "0".
     default_base: '0',
     default_price_base: '0',
   };
 
-  // Ours last in both cases: the flags above are theirs to keep, the fields below are ours
-  // to own, and `stock_available` follows our active toggle either way.
+  // `stock_available` follows our active toggle on both operations.
   const stock = { stock_available: [input.isActive ? '1' : '0'] };
 
   if (input.sixorbitId) {
+    // The edit form's multipart `data` field is one object with this exact set of keys.
+    // Keep write-form values from the imported row where available, then apply ours.
     return {
       operation: 'edit',
       payload: {
-        ...defaults,
+        item_type: 'Closed Stock',
+        product_type: 'Product',
+        item_service: '0',
+        fixed_price: ['0'],
+        pcount: ['1'],
+        images: [],
+        company: '',
+        default_vendor: '',
+        rack_code: '',
+        weight: '0.00000000',
+        incentive: '0.00000000',
+        profitability: '0.00000000',
         ...carryForward(input.raw),
         ...ours,
         ...stock,
@@ -240,5 +224,11 @@ export function buildSixOrbitPushPlan(input: SixOrbitPushInput): SixOrbitPushPla
     };
   }
 
-  return { operation: 'create', payload: { ...defaults, ...ours, ...stock }, blocks };
+  // SixOrbit assigns `variation_number` on create. The ERP SKU is a local placeholder
+  // until that number comes back, so it must not be submitted as their `sku_code`.
+  return {
+    operation: 'create',
+    payload: { ...createDefaults, ...ours, sku_code: '', ...stock },
+    blocks,
+  };
 }

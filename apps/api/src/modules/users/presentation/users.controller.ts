@@ -45,8 +45,8 @@ export class UsersController {
   @Get('salesmen')
   @RequirePermissions(PERMISSIONS.QUOTATION_READ)
   @ApiOperation({ summary: 'Active users holding a sales role' })
-  salesmen(): Promise<SalesmanItem[]> {
-    return this.queryBus.execute(new ListSalesmenQuery());
+  salesmen(@Query('branchId', new ParseUUIDPipe({ optional: true })) branchId?: string): Promise<SalesmanItem[]> {
+    return this.queryBus.execute(new ListSalesmenQuery(branchId));
   }
 
   @Get(':id')

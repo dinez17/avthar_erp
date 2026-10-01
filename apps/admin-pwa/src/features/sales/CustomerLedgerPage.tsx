@@ -12,12 +12,15 @@ import {
   TableRow,
   TextField,
   Typography,
+  Button,
 } from '@mui/material';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { endOfDayIso, startOfDayIso } from '@tiles-erp/shared';
 import { PageContainer } from '@tiles-erp/ui';
-import type { LedgerEntryType, PartyItem } from '@tiles-erp/shared-types';
+import type { LedgerEntry, LedgerEntryType, PartyItem } from '@tiles-erp/shared-types';
+import { downloadTablePdf, type ExportColumn } from '../../components/ListExportButtons';
 import { useCustomers } from './api';
 import { useCustomerLedger } from './receipts-api';
 
@@ -32,8 +35,20 @@ const today = (): string => new Date().toISOString().slice(0, 10);
 const ENTRY_COLORS: Record<LedgerEntryType, 'default' | 'error' | 'success'> = {
   OPENING: 'default',
   INVOICE: 'error',
+  SALES_RETURN: 'success',
+  REFUND: 'error',
   RECEIPT: 'success',
 };
+
+const customerLedgerPdfColumns: ExportColumn<LedgerEntry>[] = [
+  { header: 'Date', value: (entry) => new Date(entry.date).toLocaleDateString('en-IN'), width: 80 },
+  { header: 'Type', value: (entry) => entry.type, width: 75 },
+  { header: 'Reference', value: (entry) => entry.reference, width: 115 },
+  { header: 'Particulars', value: (entry) => entry.particulars, width: 220 },
+  { header: 'Debit', value: (entry) => entry.debit || '', width: 80 },
+  { header: 'Credit', value: (entry) => entry.credit || '', width: 80 },
+  { header: 'Balance', value: (entry) => entry.balance, width: 90 },
+];
 
 /**
  * One customer's statement: invoices as debits, receipts as credits, in date order with
@@ -106,6 +121,21 @@ export function CustomerLedgerPage(): JSX.Element {
             value={to}
             onChange={(e) => setTo(e.target.value)}
           />
+          <Button
+            startIcon={<PictureAsPdfIcon />}
+            disabled={!ledger.data?.entries.length || !selected}
+            onClick={() => {
+              if (!ledger.data || !selected) return;
+              downloadTablePdf(
+                `customer-ledger-${selected.name.replace(/\s+/g, '-')}-${from}-to-${to}.pdf`,
+                `Customer Ledger - ${selected.name} - ${from} to ${to}`,
+                customerLedgerPdfColumns,
+                ledger.data.entries,
+              );
+            }}
+          >
+            PDF
+          </Button>
         </Stack>
       }
     >

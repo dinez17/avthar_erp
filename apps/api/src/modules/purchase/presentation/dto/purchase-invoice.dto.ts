@@ -71,6 +71,11 @@ export class CreatePurchaseInvoiceDto {
   @IsUUID('4')
   branchId!: string;
 
+  @ApiPropertyOptional({ format: 'uuid', description: 'Receiving godown for a direct invoice' })
+  @IsUUID('4')
+  @IsOptional()
+  godownId?: string;
+
   @ApiPropertyOptional({ format: 'uuid', description: 'Goods receipt being billed' })
   @IsUUID('4')
   @IsOptional()
@@ -132,6 +137,11 @@ export class UpdatePurchaseInvoiceDto {
   @IsUUID('4')
   @IsOptional()
   branchId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  godownId?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsUUID('4')

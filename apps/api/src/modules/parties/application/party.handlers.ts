@@ -1,6 +1,7 @@
-import { Inject } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import {
   CommandHandler,
+  CommandBus,
   QueryHandler,
   type ICommandHandler,
   type IQueryHandler,
@@ -21,6 +22,7 @@ import {
   type PartyListFilter,
   type PartyRepository,
 } from '../domain/party.repository';
+import { PushCustomerToSixOrbitCommand } from '../../sixorbit/application/sixorbit-customer-push.handlers';
 
 /** Party-specific validation rules applied by the generic handlers. */
 interface PartyRules {
@@ -245,8 +247,19 @@ export class CreateCustomerHandler extends BaseCreateHandler {
 }
 @CommandHandler(UpdateCustomerCommand)
 export class UpdateCustomerHandler extends BaseUpdateHandler {
-  constructor(@Inject(CUSTOMER_REPOSITORY) repo: PartyRepository) {
-    super(repo, 'Customer', { requiresPhone: true, uniquePhone: true });
+  constructor(@Inject(CUSTOMER_REPOSITORY) private readonly customerRepo: PartyRepository, private readonly commandBus: CommandBus) {
+    super(customerRepo, 'Customer', { requiresPhone: true, uniquePhone: true });
+  }
+  override async execute(command: UpdateCustomerCommand): Promise<PartyItem> {
+    const saved = await super.execute(command);
+    if (!saved.sixorbitId) return saved;
+    try {
+      await this.commandBus.execute(new PushCustomerToSixOrbitCommand(saved.id));
+    } catch (error) {
+      // The local edit succeeded; report the separate sync result on the saved row.
+      new Logger(UpdateCustomerHandler.name).warn(error instanceof Error ? error.message : String(error));
+    }
+    return (await this.customerRepo.findById(saved.id)) ?? saved;
   }
 }
 @CommandHandler(DeleteCustomerCommand)

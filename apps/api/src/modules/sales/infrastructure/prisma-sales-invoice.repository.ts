@@ -3,27 +3,37 @@ import type { Prisma } from '@prisma/client';
 import {
   buildPaginated,
   ConflictError,
+  excludeGst,
   formatStockQuantity,
   NotFoundError,
+  isInterStateSupply,
+  transferDocumentType,
+  transferTotals,
+  valueTransferLine,
   ValidationError,
 } from '@tiles-erp/shared';
 import type {
   InvoiceableLine,
+  CreateSalesReturnInput,
+  RefundSalesReturnInput,
   ProductPriceHint,
   Paginated,
   PaginationQuery,
   SalesInvoiceItem,
   SalesInvoiceLineItem,
   SalesInvoicePrintData,
+  SalesReturnItem,
   UUID,
 } from '@tiles-erp/shared-types';
 import { DocumentNumberService } from '../../../core/numbering/document-number.service';
 import { PrismaService } from '../../../core/prisma/prisma.service';
+import { CashPostingService } from '../../accounts/infrastructure/cash-posting.service';
 import { toLines, toPartyBlock } from './letterhead';
 import type {
   BillingParties,
   SalesInvoiceFilter,
   SalesInvoiceRepository,
+  SalesReturnFilter,
   SalesInvoiceWriteData,
 } from '../domain/sales-invoice.repository';
 
@@ -31,13 +41,16 @@ const include = {
   branch: { select: { name: true } },
   salesOrder: { select: { orderNumber: true } },
   lines: {
+    orderBy: { lineNo: 'asc' },
     include: {
+      returnLines: { select: { qtyBoxes: true } },
       product: {
         select: {
           sku: true,
           name: true,
           sizeMm: true,
           piecesPerBox: true,
+          weightKg: true,
           sqftPerBox: true,
           baseUom: true,
         },
@@ -62,6 +75,7 @@ const toLine = (
   productName: line.product.name,
   sizeMm: line.product.sizeMm,
   piecesPerBox: line.product.piecesPerBox,
+  weightKg: line.product.weightKg === null ? null : Number(line.product.weightKg),
   baseUom: line.product.baseUom,
   hsnCode: line.hsnCode,
   godownId: line.godownId,
@@ -71,6 +85,9 @@ const toLine = (
   boxes: line.boxes,
   pieces: line.pieces,
   qtyBoxes: Number(line.qtyBoxes),
+  returnedQtyBoxes: round3(
+    line.returnLines.reduce((sum, returned) => sum + Number(returned.qtyBoxes), 0),
+  ),
   mrp: line.mrp === null ? null : Number(line.mrp),
   rate: Number(line.rate),
   discountPct: Number(line.discountPct),
@@ -87,9 +104,11 @@ const toItem = (
   row: Row,
   withLines: boolean,
   godownNames: Map<string, string> = new Map(),
+  billedByName: string | null = null,
 ): SalesInvoiceItem => {
   const grandTotal = Number(row.grandTotal);
   const paidAmount = Number(row.paidAmount);
+  const returnedAmount = Number(row.returnedAmount);
   return {
     id: row.id,
     invoiceNumber: row.invoiceNumber,
@@ -103,6 +122,7 @@ const toItem = (
     placeOfSupply: row.placeOfSupply,
     salesmanUserId: row.salesmanUserId,
     salesmanName: row.salesmanName,
+    billedByName,
     branchId: row.branchId,
     branchName: row.branch.name,
     invoiceDate: row.invoiceDate.toISOString(),
@@ -120,9 +140,15 @@ const toItem = (
     roundOff: Number(row.roundOff),
     grandTotal,
     paidAmount,
-    balanceAmount: round2(grandTotal - paidAmount),
+    returnedAmount,
+    balanceAmount: round2(grandTotal - paidAmount - returnedAmount),
     remarks: row.remarks,
     cancelReason: row.cancelReason,
+    sixorbitId: row.sixorbitId,
+    sixorbitOrderId: row.sixorbitOrderId,
+    sixorbitSyncStatus: row.sixorbitSyncStatus,
+    sixorbitSyncedAt: row.sixorbitSyncedAt?.toISOString() ?? null,
+    sixorbitSyncError: row.sixorbitSyncError,
     lineCount: row.lines.length,
     totalBoxes: round2(row.lines.reduce((sum, line) => sum + Number(line.qtyBoxes), 0)),
     isInterState: Number(row.igstAmount) > 0,
@@ -136,7 +162,170 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
   constructor(
     private readonly prisma: PrismaService,
     private readonly numbering: DocumentNumberService,
+    private readonly cash: CashPostingService,
   ) {}
+
+  /**
+   * An order can reserve another branch's stock. Bring those exact reservations into
+   * its billing branch before creating a draft, so the eventual invoice uses the
+   * destination branch's GSTIN. The order lock makes a repeated click a no-op.
+   */
+  async transferOrderStock(
+    salesOrderId: UUID,
+    actorId: UUID,
+    allowedBranchIds: UUID[] | null,
+  ): Promise<string[]> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM sales_orders WHERE id = ${salesOrderId}::uuid FOR UPDATE`;
+      const order = await tx.salesOrder.findFirst({
+        where: { id: salesOrderId, deletedAt: null },
+        include: { reservations: true },
+      });
+      if (!order) throw new NotFoundError('Sales order not found');
+      if (allowedBranchIds && !allowedBranchIds.includes(order.branchId)) {
+        throw new ValidationError('You are not assigned to this order branch');
+      }
+      if (order.status !== 'CONFIRMED' && order.status !== 'PARTIALLY_INVOICED') {
+        throw new ValidationError('Only confirmed orders can be transferred for invoicing');
+      }
+      const foreign = order.reservations.filter(
+        (reservation) => reservation.status === 'ACTIVE' && reservation.branchId !== order.branchId,
+      );
+      if (foreign.length === 0) return [];
+      if (await tx.salesInvoice.count({
+        where: { salesOrderId, status: 'DRAFT', deletedAt: null },
+      })) {
+        throw new ValidationError('Finish or delete the existing draft invoice before transferring this order');
+      }
+      if (foreign.some((reservation) => reservation.gateId)) {
+        throw new ValidationError('Gate-specific stock needs a manual transfer before invoicing');
+      }
+
+      const destinationGodowns = await tx.godown.findMany({
+        where: { branchId: order.branchId, isActive: true, deletedAt: null },
+        select: { id: true },
+        // The oldest active godown is the branch's established receiving godown. Some
+        // imported branches also have alias godowns (for example "GODOWN 1" and "1").
+        // Refusing the transfer in that case leaves a valid order impossible to bill.
+        orderBy: [{ createdAt: 'asc' }, { name: 'asc' }],
+        take: 1,
+      });
+      if (destinationGodowns.length === 0) {
+        throw new ValidationError('The order branch has no active godown for automatic stock transfer');
+      }
+      const toGodownId = destinationGodowns[0].id;
+      const branchIds = [...new Set([...foreign.map((reservation) => reservation.branchId), order.branchId])];
+      const branches = await tx.branch.findMany({
+        where: { id: { in: branchIds }, deletedAt: null },
+        select: { id: true, gstin: true, stateCode: true },
+      });
+      const destination = branches.find((branch) => branch.id === order.branchId);
+      if (!destination) throw new ValidationError('Order branch no longer exists');
+      const products = await tx.product.findMany({
+        where: { id: { in: [...new Set(foreign.map((reservation) => reservation.productId))] } },
+        select: { id: true, sku: true, landingCost: true, gstRate: true },
+      });
+      const productById = new Map(products.map((product) => [product.id, product]));
+      const groups = new Map<string, typeof foreign>();
+      for (const reservation of foreign) {
+        const key = `${reservation.branchId}|${reservation.godownId}`;
+        groups.set(key, [...(groups.get(key) ?? []), reservation]);
+      }
+      const documentNumbers: string[] = [];
+      const now = new Date();
+      for (const reservations of groups.values()) {
+        const { branchId: fromBranchId, godownId: fromGodownId } = reservations[0];
+        const source = branches.find((branch) => branch.id === fromBranchId);
+        if (!source) throw new ValidationError('Source branch no longer exists');
+        const documentType = transferDocumentType(source.gstin, destination.gstin);
+        const interState = isInterStateSupply(source.stateCode, destination.stateCode);
+        const transferNo = await this.numbering.next(tx, 'STOCK_TRANSFER', fromBranchId, now);
+        const documentNo = await this.numbering.next(
+          tx, documentType === 'TAX_INVOICE' ? 'TRANSFER_INVOICE' : 'TRANSFER_CHALLAN', fromBranchId, now,
+        );
+        const combined = new Map<string, { productId: string; batchNo: string | null; shade: string | null; qtyBoxes: number }>();
+        for (const reservation of reservations) {
+          const key = `${reservation.productId}|${reservation.batchNo ?? ''}|${reservation.shade ?? ''}`;
+          const existing = combined.get(key);
+          combined.set(key, {
+            productId: reservation.productId,
+            batchNo: reservation.batchNo,
+            shade: reservation.shade,
+            qtyBoxes: round3((existing?.qtyBoxes ?? 0) + Number(reservation.qtyBoxes)),
+          });
+        }
+        const transferLines = [...combined.values()].map((line) => {
+          const product = productById.get(line.productId);
+          if (!product) throw new ValidationError('Reserved product no longer exists');
+          const rate = Number(product.landingCost ?? 0);
+          const gstRate = Number(product.gstRate);
+          return { ...line, rate, gstRate,
+            ...valueTransferLine({ qtyBoxes: line.qtyBoxes, rate, gstRate }, documentType === 'TAX_INVOICE'),
+          };
+        });
+        const totals = transferTotals(transferLines, interState);
+        const transfer = await tx.stockTransfer.create({
+          data: {
+            transferNo, documentNo, documentType, status: 'RECEIVED',
+            fromBranchId, fromGodownId, toBranchId: order.branchId, toGodownId,
+            fromGstin: source.gstin, toGstin: destination.gstin, interState,
+            transferDate: now, receivedAt: now, receivedBy: actorId,
+            receivedByName: 'Automatic order stock transfer',
+            receiptRemarks: `Automatically received for ${order.orderNumber}`,
+            remarks: `Automatic transfer for ${order.orderNumber}`,
+            ...totals, createdBy: actorId,
+            lines: { create: transferLines.map((line) => ({
+              ...line, qtyReceived: line.qtyBoxes,
+            })) },
+          },
+        });
+        for (const line of transferLines) {
+          const balance = await tx.stockBalance.findFirst({
+            where: { productId: line.productId, branchId: fromBranchId, godownId: fromGodownId,
+              gateId: null, batchNo: line.batchNo, shade: line.shade },
+            select: { id: true },
+          });
+          if (!balance || !(await tx.stockBalance.updateMany({
+            where: { id: balance.id, qtyBoxes: { gte: line.qtyBoxes } },
+            data: { qtyBoxes: { decrement: line.qtyBoxes } },
+          })).count) {
+            throw new ValidationError(`${productById.get(line.productId)?.sku ?? 'Product'}: source stock is no longer sufficient`);
+          }
+          const destinationBalance = await tx.stockBalance.findFirst({
+            where: { productId: line.productId, branchId: order.branchId, godownId: toGodownId,
+              gateId: null, batchNo: line.batchNo, shade: line.shade },
+            select: { id: true },
+          });
+          if (destinationBalance) {
+            await tx.stockBalance.update({
+              where: { id: destinationBalance.id }, data: { qtyBoxes: { increment: line.qtyBoxes } },
+            });
+          } else {
+            await tx.stockBalance.create({
+              data: { productId: line.productId, branchId: order.branchId, godownId: toGodownId,
+                gateId: null, batchNo: line.batchNo, shade: line.shade, qtyBoxes: line.qtyBoxes },
+            });
+          }
+          await tx.stockMovement.createMany({ data: [
+            { productId: line.productId, branchId: fromBranchId, godownId: fromGodownId,
+              batchNo: line.batchNo, shade: line.shade, type: 'TRANSFER_OUT', direction: 'OUT',
+              qtyBoxes: line.qtyBoxes, refType: 'TRANSFER', refId: transfer.id, refNumber: documentNo,
+              movementDate: now, createdBy: actorId },
+            { productId: line.productId, branchId: order.branchId, godownId: toGodownId,
+              batchNo: line.batchNo, shade: line.shade, type: 'TRANSFER_IN', direction: 'IN',
+              qtyBoxes: line.qtyBoxes, refType: 'TRANSFER', refId: transfer.id, refNumber: documentNo,
+              movementDate: now, createdBy: actorId },
+          ] });
+        }
+        await tx.stockReservation.updateMany({
+          where: { id: { in: reservations.map((reservation) => reservation.id) }, status: 'ACTIVE' },
+          data: { branchId: order.branchId, godownId: toGodownId, gateId: null },
+        });
+        documentNumbers.push(documentNo);
+      }
+      return documentNumbers;
+    }, { timeout: 30_000 });
+  }
 
   /**
    * Why a line cannot be posted, and where the stock actually is.
@@ -347,9 +536,15 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     const where: Prisma.SalesInvoiceWhereInput = {
       deletedAt: null,
       ...(filter.customerId ? { customerId: filter.customerId } : {}),
-      ...(filter.branchId ? { branchId: filter.branchId } : {}),
+      ...(filter.branchId ? { branchId: filter.branchId } : filter.branchIds ? { branchId: { in: filter.branchIds } } : {}),
       ...(filter.salesOrderId ? { salesOrderId: filter.salesOrderId } : {}),
       ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.fromDate || filter.toDate
+        ? { invoiceDate: {
+            ...(filter.fromDate ? { gte: filter.fromDate } : {}),
+            ...(filter.toDate ? { lte: filter.toDate } : {}),
+          } }
+        : {}),
       ...(query.search
         ? {
             OR: [
@@ -365,15 +560,26 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       this.prisma.salesInvoice.findMany({
         where,
         include,
-        orderBy: { invoiceDate: 'desc' },
+        orderBy: { invoiceNumber: 'desc' },
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
       this.prisma.salesInvoice.count({ where }),
     ]);
 
+    const creatorIds = [...new Set(rows.map((row) => row.createdBy).filter((id): id is string => Boolean(id)))];
+    const creators = creatorIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: creatorIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const creatorNames = new Map(
+      creators.map((user) => [user.id, `${user.firstName} ${user.lastName}`.trim()]),
+    );
+
     return buildPaginated(
-      rows.map((row) => toItem(row, false)),
+      rows.map((row) => toItem(row, false, new Map(), row.createdBy ? creatorNames.get(row.createdBy) ?? null : null)),
       query.page,
       query.pageSize,
       total,
@@ -386,6 +592,217 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       include,
     });
     return row ? toItem(row, true, await this.godownNames(row)) : null;
+  }
+
+  async listReturns(
+    query: PaginationQuery,
+    filter: SalesReturnFilter,
+  ): Promise<Paginated<SalesReturnItem>> {
+    const where: Prisma.SalesReturnWhereInput = {
+      ...(filter.customerId ? { customerId: filter.customerId } : {}),
+      ...(filter.branchId
+        ? { branchId: filter.branchId }
+        : filter.branchIds
+          ? { branchId: { in: filter.branchIds } }
+          : {}),
+      ...(filter.fromDate || filter.toDate
+        ? {
+            returnDate: {
+              ...(filter.fromDate ? { gte: filter.fromDate } : {}),
+              ...(filter.toDate ? { lte: filter.toDate } : {}),
+            },
+          }
+        : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { returnNumber: { contains: query.search, mode: 'insensitive' } },
+              { reason: { contains: query.search, mode: 'insensitive' } },
+              { salesInvoice: { invoiceNumber: { contains: query.search, mode: 'insensitive' } } },
+              { salesInvoice: { customerName: { contains: query.search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.salesReturn.findMany({
+        where,
+        include: {
+          salesInvoice: {
+            select: {
+              invoiceNumber: true,
+              customerName: true,
+              branch: { select: { name: true } },
+            },
+          },
+          lines: { select: { qtyBoxes: true } },
+        },
+        orderBy: [{ returnDate: 'desc' }, { returnNumber: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.salesReturn.count({ where }),
+    ]);
+    const refundRows = rows.length ? await this.prisma.cashEntry.groupBy({
+      by: ['refId'],
+      where: { refType: 'SALES_RETURN_REFUND', refId: { in: rows.map((row) => row.id) }, reversedAt: null },
+      _sum: { amount: true },
+    }) : [];
+    const refunds = new Map(refundRows.map((entry) => [entry.refId!, Number(entry._sum.amount ?? 0)]));
+    return buildPaginated(
+      rows.map((row) => {
+        const refundedAmount = round2(refunds.get(row.id) ?? 0);
+        const grandTotal = Number(row.grandTotal);
+        return ({
+        id: row.id,
+        returnNumber: row.returnNumber,
+        salesInvoiceId: row.salesInvoiceId,
+        invoiceNumber: row.salesInvoice.invoiceNumber,
+        customerId: row.customerId,
+        customerName: row.salesInvoice.customerName,
+        branchId: row.branchId,
+        branchName: row.salesInvoice.branch.name,
+        returnDate: row.returnDate.toISOString(),
+        reason: row.reason,
+        remarks: row.remarks,
+        subTotal: Number(row.subTotal),
+        gstAmount: Number(row.gstAmount),
+        grandTotal,
+        refundedAmount,
+        refundableAmount: round2(grandTotal - refundedAmount),
+        lineCount: row.lines.length,
+        totalBoxes: round3(row.lines.reduce((sum, line) => sum + Number(line.qtyBoxes), 0)),
+        });
+      }),
+      query.page,
+      query.pageSize,
+      total,
+    );
+  }
+
+  async findReturnById(id: UUID): Promise<SalesReturnItem | null> {
+    const row = await this.prisma.salesReturn.findUnique({
+      where: { id },
+      include: {
+        salesInvoice: {
+          select: {
+            invoiceNumber: true,
+            customerName: true,
+            branch: { select: { name: true } },
+          },
+        },
+        lines: {
+          include: {
+            salesInvoiceLine: {
+              select: {
+                product: {
+                  select: {
+                    sku: true,
+                    name: true,
+                    sizeMm: true,
+                    piecesPerBox: true,
+                    baseUom: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!row) return null;
+    const refund = await this.prisma.cashEntry.aggregate({
+      where: { refType: 'SALES_RETURN_REFUND', refId: row.id, reversedAt: null },
+      _sum: { amount: true },
+    });
+    const refundedAmount = round2(Number(refund._sum.amount ?? 0));
+    const godowns = await this.prisma.godown.findMany({
+      where: { id: { in: [...new Set(row.lines.map((line) => line.godownId))] } },
+      select: { id: true, name: true },
+    });
+    const godownNames = new Map(godowns.map((godown) => [godown.id, godown.name]));
+    return {
+      id: row.id,
+      returnNumber: row.returnNumber,
+      salesInvoiceId: row.salesInvoiceId,
+      invoiceNumber: row.salesInvoice.invoiceNumber,
+      customerId: row.customerId,
+      customerName: row.salesInvoice.customerName,
+      branchId: row.branchId,
+      branchName: row.salesInvoice.branch.name,
+      returnDate: row.returnDate.toISOString(),
+      reason: row.reason,
+      remarks: row.remarks,
+      subTotal: Number(row.subTotal),
+      gstAmount: Number(row.gstAmount),
+      grandTotal: Number(row.grandTotal),
+      refundedAmount,
+      refundableAmount: round2(Number(row.grandTotal) - refundedAmount),
+      lineCount: row.lines.length,
+      totalBoxes: round3(row.lines.reduce((sum, line) => sum + Number(line.qtyBoxes), 0)),
+      lines: row.lines.map((line) => ({
+        id: line.id,
+        productId: line.productId,
+        sku: line.salesInvoiceLine.product.sku,
+        productName: line.salesInvoiceLine.product.name,
+        sizeMm: line.salesInvoiceLine.product.sizeMm,
+        piecesPerBox: line.salesInvoiceLine.product.piecesPerBox,
+        baseUom: line.salesInvoiceLine.product.baseUom,
+        godownId: line.godownId,
+        godownName: godownNames.get(line.godownId) ?? 'Unknown godown',
+        boxes: line.boxes,
+        pieces: line.pieces,
+        qtyBoxes: Number(line.qtyBoxes),
+        rate: Number(line.rate),
+        gstRate: Number(line.gstRate),
+        lineSubTotal: Number(line.lineSubTotal),
+        lineGst: Number(line.lineGst),
+        lineTotal: Number(line.lineTotal),
+      })),
+    };
+  }
+
+  async refundReturn(
+    id: UUID,
+    data: RefundSalesReturnInput,
+    actorId: UUID,
+  ): Promise<SalesReturnItem> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM sales_returns WHERE id = ${id}::uuid FOR UPDATE`;
+      const returned = await tx.salesReturn.findUnique({ where: { id } });
+      if (!returned) throw new NotFoundError('Sales return not found');
+      const account = await tx.ledgerAccount.findFirst({
+        where: { id: data.accountId, deletedAt: null },
+        select: { branchId: true },
+      });
+      if (!account) throw new NotFoundError('Payment account not found');
+      if (account.branchId && account.branchId !== returned.branchId) {
+        throw new ValidationError('Choose a cash or bank account belonging to the sales return branch');
+      }
+      const refunded = await tx.cashEntry.aggregate({
+        where: { refType: 'SALES_RETURN_REFUND', refId: id, reversedAt: null },
+        _sum: { amount: true },
+      });
+      const remaining = round2(Number(returned.grandTotal) - Number(refunded._sum.amount ?? 0));
+      const amount = round2(data.amount);
+      if (amount > remaining + 0.01) {
+        throw new ValidationError(`Only ${remaining.toFixed(2)} remains to be refunded`);
+      }
+      await this.cash.post(tx, {
+        accountId: data.accountId,
+        entryDate: data.refundDate ? new Date(data.refundDate) : new Date(),
+        type: 'PAYMENT',
+        direction: 'OUT',
+        amount,
+        source: 'MANUAL',
+        refType: 'SALES_RETURN_REFUND',
+        refId: returned.id,
+        refNumber: returned.returnNumber,
+        referenceNo: data.referenceNo,
+        narration: data.remarks?.trim() || `Customer refund against ${returned.returnNumber}`,
+      }, actorId);
+    });
+    return (await this.findReturnById(id))!;
   }
 
   async create(
@@ -420,7 +837,7 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
         roundOff: data.roundOff,
         grandTotal: data.grandTotal,
         createdBy,
-        lines: { create: data.lines },
+        lines: { create: data.lines.map((line, index) => ({ ...line, lineNo: index + 1 })) },
       },
       include,
     });
@@ -473,7 +890,7 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       }
       await tx.salesInvoiceLine.deleteMany({ where: { salesInvoiceId: id } });
       await tx.salesInvoiceLine.createMany({
-        data: data.lines.map((line) => ({ ...line, salesInvoiceId: id })),
+        data: data.lines.map((line, index) => ({ ...line, salesInvoiceId: id, lineNo: index + 1 })),
       });
       return tx.salesInvoice.findFirstOrThrow({ where: { id }, include });
     });
@@ -495,6 +912,67 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       if (invoice.status === 'POSTED') throw new ValidationError('Invoice is already posted');
       if (invoice.status === 'CANCELLED') throw new ValidationError('Invoice is cancelled');
       if (invoice.lines.length === 0) throw new ValidationError('This invoice has no lines');
+
+      // Check every line before writing any movement. The old line-by-line check stopped at
+      // the first shortage, forcing the user to fix and retry the invoice repeatedly. Keep a
+      // virtual balance per stock row so repeated lines that draw from the same stock are also
+      // assessed together rather than each appearing affordable in isolation.
+      const remainingByBalance = new Map<string, number>();
+      const shortages: string[] = [];
+      for (const line of invoice.lines) {
+        const qty = Number(line.qtyBoxes);
+        if (qty <= 0) continue;
+
+        const candidates = await tx.stockBalance.findMany({
+          where: {
+            productId: line.productId,
+            branchId: invoice.branchId,
+            godownId: line.godownId,
+            ...(line.gateId ? { gateId: line.gateId } : {}),
+            ...(line.batchNo ? { batchNo: line.batchNo } : {}),
+            ...(line.shade ? { shade: line.shade } : {}),
+            qtyBoxes: { gt: 0 },
+          },
+          select: { id: true, qtyBoxes: true },
+          orderBy: [{ batchNo: 'asc' }, { gateId: 'asc' }],
+        });
+
+        const available = round3(
+          candidates.reduce((sum, balance) => {
+            const remaining = remainingByBalance.get(balance.id) ?? Number(balance.qtyBoxes);
+            remainingByBalance.set(balance.id, remaining);
+            return sum + remaining;
+          }, 0),
+        );
+
+        if (available < qty) {
+          const takenByOrder = line.salesOrderLineId
+            ? await this.orderLineAlreadyInvoiced(tx, line.salesOrderLineId, id)
+            : null;
+          shortages.push(
+            takenByOrder ??
+              (await this.shortStockMessage(tx, invoice.branchId, line, available, qty)),
+          );
+          continue;
+        }
+
+        let outstanding = qty;
+        for (const balance of candidates) {
+          if (outstanding <= 0) break;
+          const remaining = remainingByBalance.get(balance.id) ?? Number(balance.qtyBoxes);
+          const take = round3(Math.min(remaining, outstanding));
+          remainingByBalance.set(balance.id, round3(remaining - take));
+          outstanding = round3(outstanding - take);
+        }
+      }
+
+      if (shortages.length > 0) {
+        const uniqueShortages = [...new Set(shortages)];
+        throw new ValidationError(
+          `Stock is not available for ${uniqueShortages.length} item${uniqueShortages.length === 1 ? '' : 's'}:\n` +
+            uniqueShortages.map((message) => `• ${message}`).join('\n'),
+        );
+      }
 
       for (const line of invoice.lines) {
         const qty = Number(line.qtyBoxes);
@@ -637,6 +1115,199 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
   }
 
   /** Cancelling a posted invoice puts the stock back and undoes the order draw-down. */
+  async createReturn(
+    id: UUID,
+    data: CreateSalesReturnInput,
+    createdBy: UUID,
+  ): Promise<SalesReturnItem> {
+    if (!data.reason.trim()) throw new ValidationError('A return reason is required');
+    if (!data.lines.length) throw new ValidationError('Enter a return quantity for at least one item');
+
+    return this.prisma.$transaction(async (tx) => {
+      const invoice = await tx.salesInvoice.findFirst({
+        where: { id, deletedAt: null },
+        include: {
+          branch: { select: { name: true } },
+          lines: {
+            include: {
+              product: {
+                select: { sku: true, piecesPerBox: true, sqftPerBox: true, baseUom: true },
+              },
+              returnLines: { select: { qtyBoxes: true } },
+            },
+          },
+        },
+      });
+      if (!invoice) throw new NotFoundError('Sales invoice not found');
+      if (invoice.status !== 'POSTED') {
+        throw new ValidationError('Only a posted sales invoice can be returned');
+      }
+
+      const requested = new Map(data.lines.map((line) => [line.salesInvoiceLineId, line]));
+      if (requested.size !== data.lines.length) {
+        throw new ValidationError('The same invoice item cannot appear twice in one return');
+      }
+
+      const returnLines = invoice.lines.flatMap((line) => {
+        const input = requested.get(line.id);
+        if (!input) return [];
+        const piecesPerBox = line.product.piecesPerBox;
+        if (input.boxes < 0 || input.pieces < 0 || input.pieces >= piecesPerBox) {
+          throw new ValidationError(`${line.product.sku}: enter valid box and piece quantities`);
+        }
+        const qtyBoxes = round3(input.boxes + input.pieces / piecesPerBox);
+        const alreadyReturned = round3(
+          line.returnLines.reduce((sum, returned) => sum + Number(returned.qtyBoxes), 0),
+        );
+        const available = round3(Number(line.qtyBoxes) - alreadyReturned);
+        if (qtyBoxes <= 0) return [];
+        if (qtyBoxes > available + 0.0005) {
+          throw new ValidationError(
+            `${line.product.sku}: only ${formatStockQuantity(
+              available,
+              piecesPerBox,
+              Number(line.product.sqftPerBox ?? 0),
+              line.product.baseUom,
+            )} can be returned`,
+          );
+        }
+        const ratio = qtyBoxes / Number(line.qtyBoxes);
+        const lineSubTotal = round2(Number(line.lineSubTotal) * ratio);
+        const lineGst = round2(Number(line.lineGst) * ratio);
+        return [{
+          salesInvoiceLineId: line.id,
+          productId: line.productId,
+          godownId: line.godownId,
+          boxes: input.boxes,
+          pieces: input.pieces,
+          qtyBoxes,
+          rate: Number(line.rate),
+          gstRate: Number(line.gstRate),
+          lineSubTotal,
+          lineGst,
+          lineTotal: round2(lineSubTotal + lineGst),
+          source: line,
+        }];
+      });
+      if (!returnLines.length) throw new ValidationError('Enter a return quantity for at least one item');
+      if (returnLines.length !== requested.size) {
+        throw new ValidationError('One or more return items do not belong to this invoice');
+      }
+
+      const subTotal = round2(returnLines.reduce((sum, line) => sum + line.lineSubTotal, 0));
+      const gstAmount = round2(returnLines.reduce((sum, line) => sum + line.lineGst, 0));
+      const grandTotal = round2(returnLines.reduce((sum, line) => sum + line.lineTotal, 0));
+      const outstanding = round2(
+        Number(invoice.grandTotal) - Number(invoice.paidAmount) - Number(invoice.returnedAmount),
+      );
+      if (grandTotal > outstanding + 0.01) {
+        throw new ValidationError(
+          `Return value ${grandTotal.toFixed(2)} exceeds invoice outstanding ${outstanding.toFixed(2)}. Reverse collections first.`,
+        );
+      }
+
+      const returnDate = data.returnDate ? new Date(data.returnDate) : new Date();
+      const returnNumber = await this.numbering.next(tx, 'SALES_RETURN', invoice.branchId, returnDate);
+      const created = await tx.salesReturn.create({
+        data: {
+          returnNumber,
+          salesInvoiceId: invoice.id,
+          customerId: invoice.customerId,
+          branchId: invoice.branchId,
+          returnDate,
+          reason: data.reason.trim(),
+          remarks: data.remarks?.trim() || null,
+          subTotal,
+          gstAmount,
+          grandTotal,
+          createdBy,
+          lines: {
+            create: returnLines.map(({ source: _source, ...line }) => line),
+          },
+        },
+      });
+
+      for (const line of returnLines) {
+        await tx.stockMovement.create({
+          data: {
+            productId: line.productId,
+            branchId: invoice.branchId,
+            godownId: line.godownId,
+            gateId: line.source.gateId,
+            batchNo: line.source.batchNo,
+            shade: line.source.shade,
+            type: 'SALE_RETURN',
+            direction: 'IN',
+            qtyBoxes: line.qtyBoxes,
+            refType: 'SALES_RETURN',
+            refId: created.id,
+            refNumber: returnNumber,
+            reason: data.reason.trim(),
+            remarks: data.remarks?.trim() || null,
+            movementDate: returnDate,
+            createdBy,
+          },
+        });
+        const balance = await tx.stockBalance.findFirst({
+          where: {
+            productId: line.productId,
+            branchId: invoice.branchId,
+            godownId: line.godownId,
+            gateId: line.source.gateId,
+            batchNo: line.source.batchNo,
+            shade: line.source.shade,
+          },
+          select: { id: true },
+        });
+        if (balance) {
+          await tx.stockBalance.update({
+            where: { id: balance.id },
+            data: { qtyBoxes: { increment: line.qtyBoxes } },
+          });
+        } else {
+          await tx.stockBalance.create({
+            data: {
+              productId: line.productId,
+              branchId: invoice.branchId,
+              godownId: line.godownId,
+              gateId: line.source.gateId,
+              batchNo: line.source.batchNo,
+              shade: line.source.shade,
+              qtyBoxes: line.qtyBoxes,
+            },
+          });
+        }
+      }
+
+      await tx.salesInvoice.update({
+        where: { id: invoice.id },
+        data: { returnedAmount: { increment: grandTotal }, version: { increment: 1 }, updatedBy: createdBy },
+      });
+
+      return {
+        id: created.id,
+        returnNumber,
+        salesInvoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        customerId: invoice.customerId,
+        customerName: invoice.customerName,
+        branchId: invoice.branchId,
+        branchName: invoice.branch.name,
+        returnDate: created.returnDate.toISOString(),
+        reason: created.reason,
+        remarks: created.remarks,
+        subTotal,
+        gstAmount,
+        grandTotal,
+        refundedAmount: 0,
+        refundableAmount: grandTotal,
+        lineCount: returnLines.length,
+        totalBoxes: round3(returnLines.reduce((sum, line) => sum + line.qtyBoxes, 0)),
+      };
+    });
+  }
+
+  /** Cancelling a posted invoice puts the stock back and undoes the order draw-down. */
   async cancel(
     id: UUID,
     version: number,
@@ -650,6 +1321,11 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       });
       if (!invoice) throw new NotFoundError('Sales invoice not found');
       if (invoice.status === 'CANCELLED') throw new ValidationError('Invoice is already cancelled');
+      if (Number(invoice.returnedAmount) > 0) {
+        throw new ValidationError(
+          'This invoice has sales returns and cannot be cancelled',
+        );
+      }
       if (Number(invoice.paidAmount) > 0) {
         throw new ValidationError(
           'Money has been collected against this invoice; reverse the collection first',
@@ -764,18 +1440,177 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     });
     if (!row) return null;
 
-    const [terms, declaration] = await Promise.all([
+    const [terms, declaration, customer] = await Promise.all([
       this.prisma.setting.findUnique({ where: { key: 'invoice.terms' } }),
       this.prisma.setting.findUnique({ where: { key: 'invoice.declaration' } }),
+      this.prisma.customer.findUnique({ where: { id: row.customerId }, select: { pincode: true } }),
     ]);
 
+    const invoice = toItem(
+      row as unknown as Row,
+      true,
+      await this.godownNames(row as unknown as Row),
+    );
+    const deliveryLines = await this.deliverySlipLines(row as unknown as Row, invoice.lines ?? []);
+
     return {
-      invoice: toItem(row as unknown as Row, true, await this.godownNames(row as unknown as Row)),
+      invoice,
+      deliveryLines,
+      customerPincode: customer?.pincode ?? null,
       company: toPartyBlock(row.branch.company),
       branch: toPartyBlock({ ...row.branch, legalName: null }),
       terms: toLines(terms?.value),
       declaration: declaration?.value?.trim() || null,
     };
+  }
+
+  /**
+   * Automatic order transfers bring foreign stock into the billing branch before the
+   * invoice is created. Accounting must show the billing branch, but the delivery team
+   * still needs a separate picking slip for the godown that physically supplied it.
+   *
+   * Those transfers are created immediately before the draft and carry the order number
+   * in their remarks. Rebuild delivery-only rows from that audit trail; invoice rows and
+   * stock movements remain unchanged.
+   */
+  private async deliverySlipLines(
+    row: Row,
+    invoiceLines: SalesInvoiceLineItem[],
+  ): Promise<SalesInvoiceLineItem[]> {
+    const orderNumber = row.salesOrder?.orderNumber;
+    if (!orderNumber || invoiceLines.length === 0) return invoiceLines;
+
+    const createdAt = row.createdAt;
+    const shortlyBeforeInvoice = new Date(createdAt.getTime() - 10 * 60 * 1000);
+    const transfers = await this.prisma.stockTransfer.findMany({
+      where: {
+        toBranchId: row.branchId,
+        status: 'RECEIVED',
+        remarks: `Automatic transfer for ${orderNumber}`,
+        transferDate: { gte: shortlyBeforeInvoice, lte: createdAt },
+      },
+      select: {
+        id: true,
+        fromGodownId: true,
+        transferDate: true,
+        lines: {
+          select: { productId: true, batchNo: true, shade: true, qtyReceived: true, qtyBoxes: true },
+        },
+      },
+      orderBy: { transferDate: 'asc' },
+    });
+    if (transfers.length === 0) return invoiceLines;
+
+    const sourceGodownIds = [...new Set(transfers.map((transfer) => transfer.fromGodownId))];
+    const sourceGodowns = await this.prisma.godown.findMany({
+      where: { id: { in: sourceGodownIds } },
+      select: { id: true, name: true },
+    });
+    const sourceGodownNames = new Map(sourceGodowns.map((godown) => [godown.id, godown.name]));
+    const keyOf = (value: { productId: string; batchNo: string | null; shade: string | null }): string =>
+      `${value.productId}|${value.batchNo ?? ''}|${value.shade ?? ''}`;
+
+    const supplied = new Map<string, { godownId: string; qtyBoxes: number }[]>();
+    for (const transfer of transfers) {
+      for (const line of transfer.lines) {
+        const qtyBoxes = Number(line.qtyReceived ?? line.qtyBoxes);
+        if (qtyBoxes <= 0) continue;
+        const key = keyOf(line);
+        const sources = supplied.get(key) ?? [];
+        const existing = sources.find((source) => source.godownId === transfer.fromGodownId);
+        if (existing) existing.qtyBoxes = round3(existing.qtyBoxes + qtyBoxes);
+        else sources.push({ godownId: transfer.fromGodownId, qtyBoxes: round3(qtyBoxes) });
+        supplied.set(key, sources);
+      }
+    }
+
+    const groups = new Map<string, SalesInvoiceLineItem[]>();
+    for (const line of invoiceLines) {
+      const key = keyOf(line);
+      groups.set(key, [...(groups.get(key) ?? []), line]);
+    }
+
+    const quantityFields = (
+      template: SalesInvoiceLineItem,
+      qtyBoxes: number,
+    ): Pick<SalesInvoiceLineItem, 'qtyBoxes' | 'boxes' | 'pieces'> => {
+      const piecesPerBox = Math.max(template.piecesPerBox, 1);
+      if (template.baseUom === 'PIECE') {
+        return { qtyBoxes, boxes: 0, pieces: Math.round(qtyBoxes * piecesPerBox) };
+      }
+      const boxes = Math.floor(qtyBoxes + 0.0001);
+      return {
+        qtyBoxes,
+        boxes,
+        pieces: Math.max(0, Math.round((qtyBoxes - boxes) * piecesPerBox)),
+      };
+    };
+
+    const result: SalesInvoiceLineItem[] = [];
+    for (const [key, lines] of groups) {
+      const template = lines[0]!;
+      let remaining = round3(lines.reduce((sum, line) => sum + line.qtyBoxes, 0));
+      let splitIndex = 0;
+      for (const source of supplied.get(key) ?? []) {
+        const qtyBoxes = round3(Math.min(source.qtyBoxes, remaining));
+        if (qtyBoxes <= 0) continue;
+        result.push({
+          ...template,
+          id: `${template.id}:delivery:${splitIndex++}`,
+          godownId: source.godownId,
+          godownName: sourceGodownNames.get(source.godownId) ?? 'Unknown godown',
+          ...quantityFields(template, qtyBoxes),
+        });
+        remaining = round3(remaining - qtyBoxes);
+      }
+      if (remaining > 0) {
+        result.push({
+          ...template,
+          id: `${template.id}:delivery:${splitIndex}`,
+          ...quantityFields(template, remaining),
+        });
+      }
+    }
+    return result.length > 0 ? result : invoiceLines;
+  }
+
+  async claimDeliverySlipPrint(id: UUID, actorId: UUID, allowReprint: boolean): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // Serialise attempts for this invoice so two near-simultaneous requests cannot both
+      // become the regular user's first copy.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`delivery-slip:${id}`}))`;
+
+      const invoice = await tx.salesInvoice.findFirst({
+        where: { id, deletedAt: null },
+        select: { status: true },
+      });
+      if (!invoice) throw new NotFoundError('Sales invoice not found');
+      if (invoice.status !== 'POSTED') {
+        throw new ValidationError('Post the sales invoice before printing it.');
+      }
+
+      if (!allowReprint) {
+        const priorPrint = await tx.auditLog.findFirst({
+          where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
+          select: { id: true },
+        });
+        if (priorPrint) {
+          throw new ValidationError(
+            'The delivery slip has already been printed. Contact an admin for another copy.',
+          );
+        }
+      }
+
+      await tx.auditLog.create({
+        data: {
+          entity: 'SalesInvoice',
+          entityId: id,
+          action: 'DELIVERY_SLIP_PRINTED',
+          userId: actorId,
+          changes: { reprint: allowReprint },
+        },
+      });
+    });
   }
 
   async billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties> {
@@ -801,14 +1636,18 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       }),
       this.prisma.salesInvoice.findMany({
         where: { customerId, deletedAt: null, status: 'POSTED' },
-        select: { grandTotal: true, paidAmount: true },
+        select: { grandTotal: true, paidAmount: true, returnedAmount: true },
       }),
     ]);
     if (!customer) throw new ValidationError('Customer not found');
     if (!branch) throw new ValidationError('Branch not found');
 
     const outstanding = posted.reduce(
-      (sum, invoice) => sum + (Number(invoice.grandTotal) - Number(invoice.paidAmount)),
+      (sum, invoice) =>
+        sum +
+        (Number(invoice.grandTotal) -
+          Number(invoice.paidAmount) -
+          Number(invoice.returnedAmount)),
       0,
     );
 
@@ -873,10 +1712,10 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
             baseUom: product.baseUom,
             mrp: product.mrp === null ? null : Number(product.mrp),
             gstRate: Number(product.gstRate),
-            landingCost: product.landingCost === null ? null : Number(product.landingCost),
-            displayPrice: price ? Number(price.displayPrice) : null,
-            minSellingPrice: price ? Number(price.minSellingPrice) : null,
-            sellingPrice: price ? Number(price.sellingPrice) : null,
+            landingCost: product.landingCost === null ? null : excludeGst(Number(product.landingCost), Number(product.gstRate)),
+            displayPrice: price ? excludeGst(Number(price.displayPrice), Number(product.gstRate)) : null,
+            minSellingPrice: price ? excludeGst(Number(price.minSellingPrice), Number(product.gstRate)) : null,
+            sellingPrice: price ? excludeGst(Number(price.sellingPrice), Number(product.gstRate)) : null,
           },
         ];
       }),
@@ -889,6 +1728,14 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       select: { firstName: true, lastName: true },
     });
     return user ? `${user.firstName} ${user.lastName}`.trim() : null;
+  }
+
+  async orderSalesman(salesOrderId: UUID): Promise<{ userId: UUID | null; name: string | null } | null> {
+    const order = await this.prisma.salesOrder.findFirst({
+      where: { id: salesOrderId, deletedAt: null },
+      select: { salesmanUserId: true, salesmanName: true },
+    });
+    return order ? { userId: order.salesmanUserId, name: order.salesmanName } : null;
   }
 
   /**

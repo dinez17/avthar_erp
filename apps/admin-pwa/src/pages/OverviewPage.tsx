@@ -24,7 +24,7 @@ import HourglassTopIcon from '@mui/icons-material/HourglassTop';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatBoxPieces } from '@tiles-erp/shared';
 import { LoadingOverlay, PageContainer } from '@tiles-erp/ui';
@@ -33,6 +33,9 @@ import { apiFetch } from '../lib/api-client';
 import { Chart } from '../components/Chart';
 import { useCashPosition } from '../features/accounts/api';
 import { useBranches } from '../features/products/branch-prices-api';
+import { useAuth } from '../auth/AuthProvider';
+import { PERMISSIONS } from '@tiles-erp/config';
+import { useSessionBranchId } from '../lib/session-branch';
 
 const RANGES = [
   { value: 7, label: 'Last 7 days' },
@@ -62,7 +65,7 @@ const compact = (value: number): string => {
 const dayLabel = (date: string): string =>
   new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 
-function useDashboard(days: number, branchId: string) {
+function useDashboard(days: number, branchId: string, enabled: boolean) {
   const from = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000).toISOString();
   const params = new URLSearchParams({ from });
   if (branchId) params.set('branchId', branchId);
@@ -70,17 +73,30 @@ function useDashboard(days: number, branchId: string) {
     queryKey: ['dashboard', days, branchId || null],
     queryFn: () => apiFetch<DashboardSummary>(`/dashboard/summary?${params.toString()}`),
     staleTime: 60_000,
+    enabled,
   });
 }
 
 /** The figures the counter and the owner look at first thing in the morning. */
 export function OverviewPage(): JSX.Element {
   const navigate = useNavigate();
+  const { user, hasPermission } = useAuth();
   const branches = useBranches();
+  const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
+  const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [days, setDays] = useState<number>(30);
-  const [branchId, setBranchId] = useState('');
-  const { data, isLoading, isError } = useDashboard(days, branchId);
-  const { data: position } = useCashPosition(new Date().toISOString(), branchId || undefined);
+  const [branchId, setBranchId] = useSessionBranchId();
+  useEffect(() => {
+    if (!canChangeBranch && user?.branchIds.length) {
+      setBranchId((current) => user.branchIds.includes(current) ? current : user.branchIds[0]!);
+    }
+  }, [canChangeBranch, user?.branchIds]);
+  const { data, isLoading, isError } = useDashboard(days, branchId, canChangeBranch || Boolean(branchId));
+  const { data: position } = useCashPosition(
+    new Date().toISOString(),
+    branchId || undefined,
+    hasPermission(PERMISSIONS.CASH_BOOK_READ) && (canChangeBranch || Boolean(branchId)),
+  );
 
   return (
     <PageContainer
@@ -95,10 +111,11 @@ export function OverviewPage(): JSX.Element {
             fullWidth={false}
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
+            disabled={!canChangeBranch && availableBranches.length <= 1}
             sx={{ width: 170 }}
           >
-            <MenuItem value="">All branches</MenuItem>
-            {(branches.data ?? []).map((branch) => (
+            {canChangeBranch && <MenuItem value="">All branches</MenuItem>}
+            {availableBranches.map((branch) => (
               <MenuItem key={branch.id} value={branch.id}>
                 {branch.name}
               </MenuItem>
@@ -123,6 +140,7 @@ export function OverviewPage(): JSX.Element {
       }
     >
       {isLoading && <LoadingOverlay open />}
+      {!canChangeBranch && !user?.branchIds.length && <Alert severity="warning">No branch assigned. Contact your administrator.</Alert>}
       {isError && <Alert severity="error">The overview could not be loaded.</Alert>}
 
       {data && (

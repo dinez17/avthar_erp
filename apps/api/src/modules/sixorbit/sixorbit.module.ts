@@ -1,3 +1,5 @@
+import { SixOrbitInventoryService } from './application/sixorbit-inventory.service';
+import { SixOrbitInventoryExcelService } from './application/sixorbit-inventory-excel.service';
 import { Logger, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { CqrsModule } from '@nestjs/cqrs';
@@ -14,6 +16,8 @@ import {
   SixOrbitImportStatusStore,
   SixOrbitProductImportService,
   SixOrbitProductPushService,
+  SixOrbitCustomerPushService,
+  SixOrbitSalesOrderPushService,
   type SixOrbitCache,
   type SixOrbitConfigRepository,
   type SixOrbitSyncLogRepository,
@@ -41,6 +45,8 @@ import {
   PushProductOnChangeHandler,
   PushProductToSixOrbitHandler,
 } from './application/sixorbit-push.handlers';
+import { PushCustomerToSixOrbitHandler } from './application/sixorbit-customer-push.handlers';
+import { PushSalesOrderToSixOrbitHandler } from './application/sixorbit-sales-order-push.handlers';
 
 /**
  * SixOrbit integration (phase 12).
@@ -53,6 +59,8 @@ import {
   imports: [CqrsModule, BullModule.registerQueue({ name: QUEUE_NAMES.SIXORBIT })],
   controllers: [SixOrbitController],
   providers: [
+    SixOrbitInventoryService,
+    SixOrbitInventoryExcelService,
     SixOrbitRedisCache,
 
     {
@@ -115,6 +123,21 @@ import {
           new Logger(SixOrbitProductImportService.name),
         ),
     },
+    {
+      provide: SixOrbitCustomerPushService,
+      inject: [PrismaService, SixOrbitClient],
+      useFactory: (prisma: PrismaService, client: SixOrbitClient) =>
+        new SixOrbitCustomerPushService(prisma, client),
+    },
+    {
+      provide: SixOrbitSalesOrderPushService,
+      inject: [PrismaService, SixOrbitClient, SixOrbitCustomerPushService],
+      useFactory: (
+        prisma: PrismaService,
+        client: SixOrbitClient,
+        customerPusher: SixOrbitCustomerPushService,
+      ) => new SixOrbitSalesOrderPushService(prisma, client, customerPusher),
+    },
 
     GetSixOrbitConfigHandler,
     SaveSixOrbitConfigHandler,
@@ -123,6 +146,8 @@ import {
     PushProductOnChangeHandler,
     PushProductToSixOrbitHandler,
     PushPendingProductsHandler,
+    PushCustomerToSixOrbitHandler,
+    PushSalesOrderToSixOrbitHandler,
     GetSixOrbitSyncHealthHandler,
     PruneSixOrbitSyncLogHandler,
     DryRunSixOrbitImportHandler,

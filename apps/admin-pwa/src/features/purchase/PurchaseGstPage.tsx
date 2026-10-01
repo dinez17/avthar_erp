@@ -1,5 +1,6 @@
 import PrintIcon from '@mui/icons-material/Print';
-import TableViewIcon from '@mui/icons-material/TableView';
+import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   Alert,
   Button,
@@ -23,9 +24,10 @@ import { toDateInput, type CsvValue } from '@tiles-erp/shared';
 import { LoadingOverlay, PageContainer } from '@tiles-erp/ui';
 import type { TaxLeg } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
-import { downloadCsv } from '../../lib/download';
+import { downloadTableExcel, downloadTablePdf, type ExportColumn } from '../../components/ListExportButtons';
 import { useBranches } from '../products/branch-prices-api';
 import { usePurchaseGst, useTaxPosition } from './purchase-gst-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 const money = (value: number): string =>
   value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -51,7 +53,7 @@ export function PurchaseGstPage(): JSX.Element {
   const branches = useBranches();
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(monthEnd);
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [tab, setTab] = useState(0);
 
   const summary = usePurchaseGst(from, to, branchId);
@@ -426,19 +428,18 @@ function Section({
   rows: CsvValue[][];
   children: React.ReactNode;
 }): JSX.Element {
+  type Row = Record<string, CsvValue>;
+  const exportRows: Row[] = rows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
+  const exportColumns: ExportColumn<Row>[] = headers.map((header) => ({ header, value: (row) => String(row[header] ?? '') }));
+  const baseName = filename.replace(/\.csv$/i, '');
   return (
     <Paper variant="outlined" sx={{ p: 1.5 }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
         <Typography variant="subtitle2">{title}</Typography>
-        <Button
-          className="print-hidden"
-          size="small"
-          startIcon={<TableViewIcon />}
-          disabled={rows.length === 0}
-          onClick={() => downloadCsv(filename, headers, rows)}
-        >
-          CSV
-        </Button>
+        <Stack direction="row" spacing={1} className="print-hidden">
+          <Button size="small" startIcon={<DownloadIcon />} disabled={!rows.length} onClick={() => downloadTableExcel(`${baseName}.xls`, title, exportColumns, exportRows)}>Excel</Button>
+          <Button size="small" startIcon={<PictureAsPdfIcon />} disabled={!rows.length} onClick={() => downloadTablePdf(`${baseName}.pdf`, title, exportColumns, exportRows)}>PDF</Button>
+        </Stack>
       </Stack>
       {children}
     </Paper>

@@ -33,6 +33,7 @@ const include = {
   branch: { select: { name: true } },
   quotation: { select: { quotationNumber: true } },
   lines: {
+    orderBy: { lineNo: 'asc' },
     include: {
       product: {
         select: { sku: true, name: true, sizeMm: true, piecesPerBox: true, baseUom: true },
@@ -127,6 +128,11 @@ const toItem = (row: Row, withLines: boolean): SalesOrderItem => {
   roundOff: Number(row.roundOff),
   grandTotal: Number(row.grandTotal),
   remarks: row.remarks,
+  sixorbitId: row.sixorbitId,
+  sixorbitOrderId: row.sixorbitOrderId,
+  sixorbitSyncStatus: row.sixorbitSyncStatus,
+  sixorbitSyncedAt: row.sixorbitSyncedAt?.toISOString() ?? null,
+  sixorbitSyncError: row.sixorbitSyncError,
   cancelReason: row.cancelReason,
   lineCount: row.lines.length,
   totalBoxes: round2(row.lines.reduce((sum, line) => sum + Number(line.qtyBoxes), 0)),
@@ -150,8 +156,14 @@ export class PrismaSalesOrderRepository implements SalesOrderRepository {
     const where: Prisma.SalesOrderWhereInput = {
       deletedAt: null,
       ...(filter.customerId ? { customerId: filter.customerId } : {}),
-      ...(filter.branchId ? { branchId: filter.branchId } : {}),
+      ...(filter.branchId ? { branchId: filter.branchId } : filter.branchIds ? { branchId: { in: filter.branchIds } } : {}),
       ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.fromDate || filter.toDate
+        ? { orderDate: {
+            ...(filter.fromDate ? { gte: filter.fromDate } : {}),
+            ...(filter.toDate ? { lte: filter.toDate } : {}),
+          } }
+        : {}),
       ...(query.search
         ? {
             OR: [
@@ -167,7 +179,7 @@ export class PrismaSalesOrderRepository implements SalesOrderRepository {
       this.prisma.salesOrder.findMany({
         where,
         include,
-        orderBy: { orderDate: 'desc' },
+        orderBy: { orderNumber: 'desc' },
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
@@ -216,7 +228,7 @@ export class PrismaSalesOrderRepository implements SalesOrderRepository {
           roundOff: data.roundOff,
           grandTotal: data.grandTotal,
           createdBy,
-          lines: { create: data.lines },
+          lines: { create: data.lines.map((line, index) => ({ ...line, lineNo: index + 1 })) },
         },
         include,
       });
@@ -279,7 +291,7 @@ export class PrismaSalesOrderRepository implements SalesOrderRepository {
       }
       await tx.salesOrderLine.deleteMany({ where: { salesOrderId: id } });
       await tx.salesOrderLine.createMany({
-        data: data.lines.map((line) => ({ ...line, salesOrderId: id })),
+        data: data.lines.map((line, index) => ({ ...line, salesOrderId: id, lineNo: index + 1 })),
       });
       return tx.salesOrder.findFirstOrThrow({ where: { id }, include });
     });

@@ -12,23 +12,28 @@ import { ApiError } from '../../lib/api-client';
 import { ProductFilterBar } from './ProductFilterBar';
 import type { ProductFilters } from './api';
 import { useBranchPrices, useBranches, useBulkUpdateBranchPrices } from './branch-prices-api';
+import { useSessionBranchId } from '../../lib/session-branch';
 
 interface PriceEdit {
+  mrp: number;
   displayPrice: number;
   minSellingPrice: number;
   sellingPrice: number;
+  franchiseeRate: number;
   version: number;
 }
 
 /** Grid row = branch price plus derived margin over landing cost. */
 type PriceRow = BranchPriceItem & { marginPct: number | null };
 
-type BulkField = 'displayPrice' | 'minSellingPrice' | 'sellingPrice';
+type BulkField = 'mrp' | 'displayPrice' | 'minSellingPrice' | 'sellingPrice' | 'franchiseeRate';
 
 const BULK_FIELDS: { value: BulkField; label: string }[] = [
-  { value: 'displayPrice', label: 'Display price' },
-  { value: 'minSellingPrice', label: 'Min selling price' },
-  { value: 'sellingPrice', label: 'Actual selling price' },
+  { value: 'mrp', label: 'MRP' },
+  { value: 'displayPrice', label: 'Display price (incl GST)' },
+  { value: 'minSellingPrice', label: 'Min selling price (incl GST)' },
+  { value: 'sellingPrice', label: 'Actual selling price (incl GST)' },
+  { value: 'franchiseeRate', label: 'Franchisee rate (incl GST)' },
 ];
 
 type BulkMode = 'set' | 'markupOnLanding';
@@ -41,13 +46,12 @@ const num = (value: unknown, fallback: number): number => {
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
 /**
- * Branch-wise selling price editor. Display / minimum / actual prices are edited
- * inline per branch; margin over landing cost previews live.
+ * Branch-wise GST-inclusive selling price editor with a reference franchisee rate.
  */
 export function SellingPricesPage(): JSX.Element {
   const pagination = usePagination({ initialPageSize: 50 });
   const branches = useBranches();
-  const [branchId, setBranchId] = useState('');
+  const [branchId, setBranchId] = useSessionBranchId();
   const [filters, setFilters] = useState<ProductFilters>({});
   const { data, isFetching, refetch } = useBranchPrices(branchId || undefined, pagination.query, filters);
   const bulkUpdate = useBulkUpdateBranchPrices();
@@ -64,9 +68,11 @@ export function SellingPricesPage(): JSX.Element {
 
   const effective = (item: BranchPriceItem): PriceEdit =>
     edits[item.productId] ?? {
+      mrp: item.mrp ?? 0,
       displayPrice: item.displayPrice ?? 0,
       minSellingPrice: item.minSellingPrice ?? 0,
       sellingPrice: item.sellingPrice ?? 0,
+      franchiseeRate: item.franchiseeRate ?? 0,
       version: item.version,
     };
 
@@ -90,9 +96,11 @@ export function SellingPricesPage(): JSX.Element {
     setEdits((prev) => ({
       ...prev,
       [row.productId]: {
+        mrp: num(row.mrp, 0),
         displayPrice: num(row.displayPrice, 0),
         minSellingPrice: num(row.minSellingPrice, 0),
         sellingPrice: num(row.sellingPrice, 0),
+        franchiseeRate: num(row.franchiseeRate, 0),
         version: prev[row.productId]?.version ?? row.version,
       },
     }));
@@ -130,9 +138,11 @@ export function SellingPricesPage(): JSX.Element {
     try {
       const payload = Object.entries(edits).map(([productId, edit]) => ({
         productId,
+        mrp: edit.mrp,
         displayPrice: edit.displayPrice,
         minSellingPrice: edit.minSellingPrice,
         sellingPrice: edit.sellingPrice,
+        franchiseeRate: edit.franchiseeRate,
         version: edit.version,
       }));
       const updated = await bulkUpdate.mutateAsync({ branchId, items: payload });
@@ -148,7 +158,9 @@ export function SellingPricesPage(): JSX.Element {
     field,
     headerName,
     editable: true,
-    maxWidth: 160,
+    flex: 0,
+    width: 130,
+    minWidth: 115,
     valueParser: (p) => num(p.newValue, num(p.oldValue, 0)),
     cellStyle: { backgroundColor: 'rgba(11, 95, 255, 0.06)' },
     valueFormatter: (p) => (p.value === null || p.value === undefined ? '—' : String(p.value)),
@@ -166,9 +178,11 @@ export function SellingPricesPage(): JSX.Element {
         maxWidth: 130,
         valueFormatter: (p) => (p.value === null || p.value === undefined ? '—' : String(p.value)),
       },
+      editableCol('mrp', 'MRP ₹'),
       editableCol('displayPrice', 'Display ₹'),
-      editableCol('minSellingPrice', 'Min selling ₹'),
       editableCol('sellingPrice', 'Actual selling ₹'),
+      editableCol('minSellingPrice', 'Min selling ₹'),
+      editableCol('franchiseeRate', 'Franchisee ₹'),
       {
         field: 'marginPct',
         headerName: 'Margin %',
@@ -189,7 +203,7 @@ export function SellingPricesPage(): JSX.Element {
   return (
     <PageContainer
       title="Selling prices"
-      subtitle="Branch-wise display, minimum and actual selling prices per box."
+      subtitle="Branch-wise selling rates per box, including GST. Franchisee rate is a reference price."
       actions={
         <Stack direction="row" spacing={1} alignItems="center">
           {dirtyCount > 0 && <Chip label={`${dirtyCount} unsaved`} color="warning" size="small" />}

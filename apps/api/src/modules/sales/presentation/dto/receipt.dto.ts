@@ -175,6 +175,16 @@ export class CancelReceiptDto extends ReceiptVersionDto {
 }
 
 export class ReceiptListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsDateString()
+  @IsOptional()
+  toDate?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsUUID('4')
   @IsOptional()

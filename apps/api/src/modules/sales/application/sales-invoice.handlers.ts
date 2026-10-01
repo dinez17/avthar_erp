@@ -19,6 +19,8 @@ import type {
   SalesInvoiceItem,
   SalesInvoiceLineInput,
   SalesInvoicePrintData,
+  SalesReturnItem,
+  CreateSalesReturnInput,
   SplitInvoiceInput,
   SplitInvoiceResult,
   UpdateSalesInvoiceInput,
@@ -54,6 +56,14 @@ export class GetSalesInvoiceQuery {
 
 export class SalesInvoicePrintQuery {
   constructor(public readonly id: UUID) {}
+}
+
+export class PrintDeliverySlipCommand {
+  constructor(
+    public readonly id: UUID,
+    public readonly actorId: UUID,
+    public readonly allowReprint: boolean,
+  ) {}
 }
 
 export class InvoiceableLinesQuery {
@@ -92,6 +102,14 @@ export class CancelSalesInvoiceCommand {
     public readonly id: UUID,
     public readonly version: number,
     public readonly reason: string,
+    public readonly actorId: UUID,
+  ) {}
+}
+
+export class CreateSalesReturnCommand {
+  constructor(
+    public readonly id: UUID,
+    public readonly data: CreateSalesReturnInput,
     public readonly actorId: UUID,
   ) {}
 }
@@ -294,7 +312,10 @@ async function buildInvoiceData(
     dueDate.setDate(dueDate.getDate() + parties.creditDays);
   }
 
-  const salesmanName = await invoices.salesmanName(actorId);
+  const orderSalesman = input.salesOrderId ? await invoices.orderSalesman(input.salesOrderId) : null;
+  if (input.salesOrderId && !orderSalesman) throw new NotFoundError('Sales order not found');
+  const salesmanUserId = input.salesOrderId ? orderSalesman!.userId : actorId;
+  const salesmanName = input.salesOrderId ? orderSalesman!.name : await invoices.salesmanName(actorId);
 
   return {
     customerId: input.customerId,
@@ -305,7 +326,7 @@ async function buildInvoiceData(
     customerMobile: input.customerMobile?.trim() || parties.customerMobile,
     customerGstin: parties.customerGstin,
     placeOfSupply: parties.customerStateCode ?? parties.branchStateCode,
-    salesmanUserId: actorId,
+    salesmanUserId,
     salesmanName,
     invoiceDate,
     dueDate,
@@ -607,6 +628,17 @@ export class CancelSalesInvoiceHandler
   }
 }
 
+@CommandHandler(CreateSalesReturnCommand)
+export class CreateSalesReturnHandler
+  implements ICommandHandler<CreateSalesReturnCommand, SalesReturnItem>
+{
+  constructor(@Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository) {}
+
+  execute(command: CreateSalesReturnCommand): Promise<SalesReturnItem> {
+    return this.invoices.createReturn(command.id, command.data, command.actorId);
+  }
+}
+
 @CommandHandler(DeleteSalesInvoiceCommand)
 export class DeleteSalesInvoiceHandler
   implements ICommandHandler<DeleteSalesInvoiceCommand, { success: true }>
@@ -627,6 +659,27 @@ export class SalesInvoicePrintHandler
 
   async execute(query: SalesInvoicePrintQuery): Promise<SalesInvoicePrintData> {
     const data = await this.invoices.printData(query.id);
+    if (!data) throw new NotFoundError('Sales invoice not found');
+    if (data.invoice.status !== 'POSTED') {
+      throw new ValidationError('Post the sales invoice before printing it.');
+    }
+    return data;
+  }
+}
+
+@CommandHandler(PrintDeliverySlipCommand)
+export class PrintDeliverySlipHandler
+  implements ICommandHandler<PrintDeliverySlipCommand, SalesInvoicePrintData>
+{
+  constructor(@Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository) {}
+
+  async execute(command: PrintDeliverySlipCommand): Promise<SalesInvoicePrintData> {
+    await this.invoices.claimDeliverySlipPrint(
+      command.id,
+      command.actorId,
+      command.allowReprint,
+    );
+    const data = await this.invoices.printData(command.id);
     if (!data) throw new NotFoundError('Sales invoice not found');
     return data;
   }

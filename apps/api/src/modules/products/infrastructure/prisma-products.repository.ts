@@ -54,6 +54,7 @@ const toItem = (row: Row): ProductItem => {
     sizeMm: row.sizeMm,
     piecesPerBox: row.piecesPerBox,
     sqftPerBox,
+    weightKg: row.weightKg === null ? null : Number(row.weightKg),
     sqftPerPiece: row.piecesPerBox > 0 ? round4(sqftPerBox / row.piecesPerBox) : 0,
     baseUom: row.baseUom,
     hsnCode: row.hsnCode,
@@ -77,6 +78,18 @@ const toItem = (row: Row): ProductItem => {
 @Injectable()
 export class PrismaProductsRepository implements ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  async nextSku(): Promise<string> {
+    const rows = await this.prisma.product.findMany({
+      where: { sku: { startsWith: 'PRD-' } },
+      select: { sku: true },
+    });
+    const highest = rows.reduce((max, row) => {
+      const value = Number.parseInt(row.sku.slice(4), 10);
+      return Number.isFinite(value) ? Math.max(max, value) : max;
+    }, 0);
+    return `PRD-${String(highest + 1).padStart(6, '0')}`;
+  }
 
   private async assertReferences(data: {
     categoryId?: UUID;
@@ -161,7 +174,7 @@ export class PrismaProductsRepository implements ProductsRepository {
     const orderBy: Prisma.ProductOrderByWithRelationInput =
       query.sortBy === 'name' || query.sortBy === 'sku' || query.sortBy === 'createdAt'
         ? { [query.sortBy]: query.sortOrder ?? 'asc' }
-        : { name: 'asc' };
+        : { createdAt: 'desc' };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where,
@@ -205,6 +218,7 @@ export class PrismaProductsRepository implements ProductsRepository {
         sizeMm: data.sizeMm,
         piecesPerBox: data.piecesPerBox,
         sqftPerBox: data.sqftPerBox,
+        weightKg: data.weightKg,
         baseUom: data.baseUom,
         hsnCode: data.hsnCode,
         gstRate: data.gstRate,

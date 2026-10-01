@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  ForbiddenException,
   HttpCode,
   HttpStatus,
   Param,
@@ -74,13 +75,26 @@ export class QuotationController {
   @RequirePermissions(PERMISSIONS.QUOTATION_READ)
   @RequireBranchScope({ in: 'query' })
   @ApiOperation({ summary: 'List quotations, newest first' })
-  list(@Query() query: QuotationListQueryDto): Promise<Paginated<QuotationItem>> {
+  list(
+    @Query() query: QuotationListQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<Paginated<QuotationItem>> {
     return this.queryBus.execute(
-      new ListQuotationsQuery(query, {
-        customerId: query.customerId,
-        branchId: query.branchId,
-        status: query.status,
-      }),
+      new ListQuotationsQuery(
+        query,
+        {
+          customerId: query.customerId,
+          branchId: query.branchId,
+          branchIds: user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')
+            ? undefined
+            : user.branchIds,
+          salesmanUserId: query.salesmanUserId,
+          status: query.status,
+          fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
+          toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
+        },
+        user.id,
+      ),
     );
   }
 
@@ -120,12 +134,15 @@ export class QuotationController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @RequirePermissions(PERMISSIONS.QUOTATION_CREATE)
-  @RequireBranchScope({ in: 'body' })
   @ApiOperation({ summary: 'Create a draft quotation' })
   create(
     @Body() dto: CreateQuotationDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<QuotationItem> {
+    if (!user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') &&
+        !user.branchIds.includes(dto.branchId)) {
+      throw new ForbiddenException('You are not assigned to this branch');
+    }
     return this.commandBus.execute(
       new CreateQuotationCommand(dto, user.id, pricingRights(user)),
     );
@@ -134,11 +151,20 @@ export class QuotationController {
   @Patch(':id')
   @RequirePermissions(PERMISSIONS.QUOTATION_UPDATE)
   @ApiOperation({ summary: 'Update a draft quotation' })
-  update(
+  async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateQuotationDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<QuotationItem> {
+    if (!user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')) {
+      const existing = await this.queryBus.execute<GetQuotationQuery, QuotationItem>(new GetQuotationQuery(id));
+      if (!user.branchIds.includes(existing.branchId)) {
+        throw new ForbiddenException('You are not assigned to this branch');
+      }
+      if (dto.branchId && dto.branchId !== existing.branchId) {
+        throw new ForbiddenException('Only Admin and Super Admin can change the quotation branch');
+      }
+    }
     return this.commandBus.execute(
       new UpdateQuotationCommand(id, dto, user.id, pricingRights(user)),
     );

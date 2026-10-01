@@ -37,7 +37,7 @@ export interface UpdateUserData {
 export interface UsersRepository {
   list(query: PaginationQuery): Promise<Paginated<UserListItem>>;
   /** Active users holding a role flagged as a sales role. */
-  listSalesmen(): Promise<SalesmanItem[]>;
+  listSalesmen(branchId?: string): Promise<SalesmanItem[]>;
   findById(id: UUID): Promise<UserListItem | null>;
   emailExists(email: string, excludeId?: UUID): Promise<boolean>;
   create(data: CreateUserData): Promise<UserListItem>;

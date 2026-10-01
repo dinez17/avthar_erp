@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import {
   Alert,
   Button,
@@ -38,9 +39,10 @@ import { useCatalogOptions } from '../catalog/api';
 import { ProductFilterBar } from './ProductFilterBar';
 import type { ProductFilters } from './api';
 import { useCreateProduct, useDeleteProduct, useProducts, useUpdateProduct } from './api';
+import { useBranches } from './branch-prices-api';
 
 const productFormSchema = z.object({
-  sku: z.string().trim().min(2, 'At least 2 characters').max(64),
+  sku: z.string().trim().max(64),
   name: z.string().trim().min(2, 'At least 2 characters').max(200),
   description: z.string().trim().max(1000),
   categoryId: z.string().min(1, 'Category is required'),
@@ -50,6 +52,7 @@ const productFormSchema = z.object({
   sizeMm: z.string().trim().max(32),
   piecesPerBox: z.coerce.number().int('Whole number').min(1, 'At least 1'),
   sqftPerBox: z.coerce.number().positive('Must be greater than 0'),
+  weightKg: z.coerce.number().min(0).optional().or(z.literal('')),
   baseUom: z.enum(['BOX', 'PIECE', 'SQFT']),
   hsnCode: z
     .string()
@@ -76,6 +79,7 @@ const emptyValues: ProductFormValues = {
   sizeMm: '',
   piecesPerBox: 1,
   sqftPerBox: 1,
+  weightKg: '',
   baseUom: 'BOX',
   hsnCode: '',
   gstRate: 18,
@@ -93,8 +97,14 @@ export function ProductsPage(): JSX.Element {
   const pagination = usePagination();
   const [filters, setFilters] = useState<ProductFilters>({});
   const { data, isFetching } = useProducts(pagination.query, filters);
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canSync = hasPermission(PERMISSIONS.SIXORBIT_SYNC);
+  const branches = useBranches();
+  const allowedBranches = (branches.data ?? []).filter((branch) =>
+    branch.isActive && (user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') || user?.branchIds.includes(branch.id)),
+  );
+  const [syncProduct, setSyncProduct] = useState<ProductItem | null>(null);
+  const [syncBranchId, setSyncBranchId] = useState('');
   const pushProduct = usePushProductToSixOrbit();
   const [pushOutcome, setPushOutcome] = useState<{
     severity: 'success' | 'warning' | 'error';
@@ -107,10 +117,11 @@ export function ProductsPage(): JSX.Element {
    * A button that reports "queued" and leaves the row unchanged is indistinguishable from
    * a button that does nothing, which is exactly how this went wrong the first time.
    */
-  const pushOne = async (product: ProductItem): Promise<void> => {
+  const pushOne = async (product: ProductItem, branchId: string): Promise<void> => {
     setPushOutcome(null);
     try {
-      const result = await pushProduct.mutateAsync(product.id);
+      const result = await pushProduct.mutateAsync({ productId: product.id, branchId });
+      setSyncProduct(null);
       if (result.operation === 'blocked') {
         setPushOutcome({
           severity: 'warning',
@@ -141,6 +152,7 @@ export function ProductsPage(): JSX.Element {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProductItem | null>(null);
+  const [copying, setCopying] = useState<ProductItem | null>(null);
   const [deleting, setDeleting] = useState<ProductItem | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -160,6 +172,7 @@ export function ProductsPage(): JSX.Element {
 
   const openCreate = (): void => {
     setEditing(null);
+    setCopying(null);
     setServerError(null);
     form.reset(emptyValues);
     setDialogOpen(true);
@@ -167,6 +180,7 @@ export function ProductsPage(): JSX.Element {
 
   const openEdit = (product: ProductItem): void => {
     setEditing(product);
+    setCopying(null);
     setServerError(null);
     form.reset({
       sku: product.sku,
@@ -179,6 +193,7 @@ export function ProductsPage(): JSX.Element {
       sizeMm: product.sizeMm ?? '',
       piecesPerBox: product.piecesPerBox,
       sqftPerBox: product.sqftPerBox,
+      weightKg: product.weightKg ?? '',
       baseUom: product.baseUom,
       hsnCode: product.hsnCode,
       gstRate: product.gstRate,
@@ -191,11 +206,39 @@ export function ProductsPage(): JSX.Element {
     setDialogOpen(true);
   };
 
+  const openCopy = (product: ProductItem): void => {
+    setEditing(null);
+    setCopying(product);
+    setServerError(null);
+    form.reset({
+      sku: '',
+      name: product.name,
+      description: product.description ?? '',
+      categoryId: product.categoryId,
+      brandId: product.brandId,
+      seriesId: product.seriesId ?? '',
+      collectionId: product.collectionId ?? '',
+      sizeMm: product.sizeMm ?? '',
+      piecesPerBox: product.piecesPerBox,
+      sqftPerBox: product.sqftPerBox,
+      weightKg: product.weightKg ?? '',
+      baseUom: product.baseUom,
+      hsnCode: product.hsnCode,
+      gstRate: product.gstRate,
+      mrp: product.mrp ?? '',
+      sellingRate: product.sellingRate ?? '',
+      barcode: '',
+      reorderLevelBoxes: product.reorderLevelBoxes ?? '',
+      isActive: product.isActive,
+    });
+    setDialogOpen(true);
+  };
+
   const onSubmit = form.handleSubmit(async (values) => {
     setServerError(null);
     try {
       const common = {
-        sku: values.sku,
+        sku: values.sku || undefined,
         name: values.name,
         description: values.description || null,
         categoryId: values.categoryId,
@@ -205,6 +248,7 @@ export function ProductsPage(): JSX.Element {
         sizeMm: values.sizeMm || null,
         piecesPerBox: values.piecesPerBox,
         sqftPerBox: values.sqftPerBox,
+        weightKg: numberOrNull(values.weightKg),
         baseUom: values.baseUom as ProductUom,
         hsnCode: values.hsnCode,
         gstRate: values.gstRate,
@@ -217,19 +261,22 @@ export function ProductsPage(): JSX.Element {
       if (editing) {
         await updateProduct.mutateAsync({ id: editing.id, ...common, version: editing.version });
       } else {
-        await createProduct.mutateAsync({
+        const created = await createProduct.mutateAsync({
           ...common,
           description: values.description || undefined,
           seriesId: values.seriesId || undefined,
           collectionId: values.collectionId || undefined,
           sizeMm: values.sizeMm || undefined,
+          weightKg: numberOrNull(values.weightKg) ?? undefined,
           mrp: numberOrNull(values.mrp) ?? undefined,
           sellingRate: numberOrNull(values.sellingRate) ?? undefined,
           barcode: values.barcode || undefined,
           reorderLevelBoxes: numberOrNull(values.reorderLevelBoxes) ?? undefined,
         });
+        setPushOutcome({ severity: 'success', text: `${created.sku} · ${created.name} created.` });
       }
       setDialogOpen(false);
+      setCopying(null);
     } catch (error) {
       setServerError(error instanceof ApiError ? error.message : 'Something went wrong');
     }
@@ -244,6 +291,7 @@ export function ProductsPage(): JSX.Element {
       { field: 'sizeMm', headerName: 'Size', maxWidth: 110 },
       { field: 'piecesPerBox', headerName: 'Pcs/Box', maxWidth: 100 },
       { field: 'sqftPerBox', headerName: 'Sqft/Box', maxWidth: 110 },
+      { field: 'weightKg', headerName: 'Weight (kg)', maxWidth: 120 },
       {
         field: 'gstRate',
         headerName: 'GST',
@@ -275,7 +323,7 @@ export function ProductsPage(): JSX.Element {
       },
       {
         headerName: '',
-        maxWidth: 150,
+        maxWidth: 185,
         cellRenderer: (p: ICellRendererParams<ProductItem>) => (
           <>
             <Tooltip title="Push to SixOrbit">
@@ -284,7 +332,11 @@ export function ProductsPage(): JSX.Element {
                   size="small"
                   aria-label="Push to SixOrbit"
                   disabled={!canSync || pushProduct.isPending}
-                  onClick={() => p.data && void pushOne(p.data)}
+                  onClick={() => {
+                    if (!p.data) return;
+                    setSyncProduct(p.data);
+                    setSyncBranchId(allowedBranches.length === 1 ? (allowedBranches[0]?.id ?? '') : '');
+                  }}
                 >
                   <CloudUploadIcon fontSize="small" />
                 </IconButton>
@@ -293,6 +345,11 @@ export function ProductsPage(): JSX.Element {
             <IconButton size="small" aria-label="Edit" onClick={() => p.data && openEdit(p.data)}>
               <EditIcon fontSize="small" />
             </IconButton>
+            <Tooltip title="Copy product">
+              <IconButton size="small" aria-label="Copy product" onClick={() => p.data && openCopy(p.data)}>
+                <ContentCopyIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <IconButton
               size="small"
               aria-label="Delete"
@@ -304,7 +361,7 @@ export function ProductsPage(): JSX.Element {
         ),
       },
     ],
-    [canSync, pushProduct],
+    [canSync, pushProduct, allowedBranches],
   );
 
   // Ctrl+S saves without reaching for the mouse.
@@ -357,17 +414,53 @@ export function ProductsPage(): JSX.Element {
         />
       </Stack>
 
+      <Dialog open={Boolean(syncProduct)} onClose={() => !pushProduct.isPending && setSyncProduct(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Push variation to SixOrbit</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Typography>{syncProduct?.sku} · {syncProduct?.name}</Typography>
+            <TextField
+              select
+              fullWidth
+              label="Branch for franchisee rate"
+              value={syncBranchId}
+              onChange={(event) => setSyncBranchId(event.target.value)}
+              disabled={pushProduct.isPending}
+              helperText="The selected branch's franchisee rate is sent as the SixOrbit dealer price."
+            >
+              {allowedBranches.map((branch) => <MenuItem key={branch.id} value={branch.id}>{branch.name}</MenuItem>)}
+            </TextField>
+            {allowedBranches.length === 0 && <Alert severity="warning">No assigned branch is available.</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSyncProduct(null)} disabled={pushProduct.isPending}>Cancel</Button>
+          <Button variant="contained" disabled={!syncBranchId || pushProduct.isPending} onClick={() => syncProduct && void pushOne(syncProduct, syncBranchId)}>
+            {pushProduct.isPending ? 'Syncing…' : 'Push to SixOrbit'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>{editing ? `Edit ${editing.sku}` : 'Create product'}</DialogTitle>
+        <DialogTitle>
+          {editing ? `Edit ${editing.sku}` : copying ? `Copy ${copying.sku}` : 'Create product'}
+        </DialogTitle>
         <form onSubmit={onSubmit} noValidate autoComplete="off">
           <DialogContent>
             <Stack spacing={2} sx={{ mt: 0.5 }}>
               {serverError && <Alert severity="error">{serverError}</Alert>}
+              {copying && (
+                <Alert severity="info">
+                  Product details were copied. A new SKU will be generated automatically; enter a barcode only when needed.
+                </Alert>
+              )}
 
               <Typography variant="subtitle2">Identity</Typography>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <TextField
-                  label="SKU"
+                  label={editing ? 'SKU' : 'SKU (automatic)'}
+                  placeholder={editing ? undefined : 'Generated when saved'}
+                  disabled={!editing}
                   error={Boolean(form.formState.errors.sku)}
                   helperText={form.formState.errors.sku?.message}
                   {...form.register('sku')}
@@ -502,6 +595,14 @@ export function ProductsPage(): JSX.Element {
                   helperText={form.formState.errors.sqftPerBox?.message}
                   {...form.register('sqftPerBox')}
                 />
+                <TextField
+                  label="Weight (kg)"
+                  type="number"
+                  inputProps={{ min: 0, step: 0.001 }}
+                  error={Boolean(form.formState.errors.weightKg)}
+                  helperText={form.formState.errors.weightKg?.message ?? 'Imported from SixOrbit product weight'}
+                  {...form.register('weightKg')}
+                />
                 <Controller
                   control={form.control}
                   name="baseUom"
@@ -540,7 +641,7 @@ export function ProductsPage(): JSX.Element {
                 />
                 <TextField label="MRP (per box)" type="number" {...form.register('mrp')} />
                 <TextField
-                  label="Selling rate (per box)"
+                  label="Selling rate (per box, incl GST)"
                   type="number"
                   {...form.register('sellingRate')}
                 />
@@ -569,7 +670,7 @@ export function ProductsPage(): JSX.Element {
               Cancel
             </Button>
             <Button type="submit" variant="contained" disabled={form.formState.isSubmitting}>
-              {editing ? 'Save changes' : 'Create product'}
+              {editing ? 'Save changes' : copying ? 'Create copied product' : 'Create product'}
             </Button>
           </DialogActions>
         </form>

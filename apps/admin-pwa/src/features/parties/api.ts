@@ -9,6 +9,12 @@ import type {
 import { apiFetch } from '../../lib/api-client';
 
 export type PartyEndpoint = '/customers' | '/suppliers';
+export type CustomerSixOrbitPushOutcome = {
+  customerId: string;
+  operation: 'create' | 'update' | 'import';
+  sixorbitId: string;
+  adopted: boolean;
+};
 
 export function useParties(endpoint: PartyEndpoint, query: PaginationQuery, stateCode?: string) {
   const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
@@ -54,5 +60,14 @@ export function useDeleteParty(endpoint: PartyEndpoint) {
     mutationFn: (id: string) =>
       apiFetch<{ success: boolean }>(`${endpoint}/${id}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [endpoint] }),
+  });
+}
+
+export function usePushCustomerToSixOrbit() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (customerId: string) =>
+      apiFetch<CustomerSixOrbitPushOutcome>(`/sixorbit/customers/${customerId}/push`, { method: 'POST' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['/customers'] }),
   });
 }

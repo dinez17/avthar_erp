@@ -10,6 +10,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -26,6 +27,8 @@ import {
 import { PERMISSIONS } from '@tiles-erp/config';
 import type {
   ExpenseHeadItem,
+  ExpenseHeadLedger,
+  AuthenticatedUser,
   LedgerAccountItem,
   LedgerAccountType,
 } from '@tiles-erp/shared-types';
@@ -169,9 +172,12 @@ export class LedgerAccountController {
   @Get()
   @RequirePermissions(PERMISSIONS.CASH_BOOK_READ)
   @ApiOperation({ summary: 'Accounts with what each holds right now' })
-  list(@Query() query: LedgerAccountQueryDto): Promise<LedgerAccountItem[]> {
+  list(@Query() query: LedgerAccountQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<LedgerAccountItem[]> {
+    // Owner holding accounts are company-wide handover destinations. Branch scope still
+    // applies to every cash drawer and bank account.
+    const branchId = query.type === 'OWNER' ? undefined : this.branch(query.branchId, user);
     return this.accounts.list({
-      branchId: query.branchId,
+      branchId,
       type: query.type,
       includeInactive: query.includeInactive,
     });
@@ -180,8 +186,35 @@ export class LedgerAccountController {
   @Get('expense-heads')
   @RequirePermissions(PERMISSIONS.CASH_BOOK_READ)
   @ApiOperation({ summary: 'Expense heads, with what has been spent this financial year' })
-  expenseHeads(@Query('includeInactive') includeInactive?: string): Promise<ExpenseHeadItem[]> {
-    return this.accounts.listExpenseHeads(includeInactive === 'true');
+  expenseHeads(@Query('includeInactive') includeInactive: string | undefined, @Query('branchId') branchId: string | undefined, @CurrentUser() user: AuthenticatedUser): Promise<ExpenseHeadItem[]> {
+    return this.accounts.listExpenseHeads(includeInactive === 'true', this.branch(branchId, user));
+  }
+
+  @Get('expense-heads/:id/ledger')
+  @RequirePermissions(PERMISSIONS.CASH_BOOK_READ)
+  @ApiOperation({ summary: 'Entries and net spend for one expense head' })
+  expenseHeadLedger(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('branchId') branchId?: string,
+    @CurrentUser() user?: AuthenticatedUser,
+  ): Promise<ExpenseHeadLedger> {
+    const today = new Date().toISOString().slice(0, 10);
+    const start = from || today;
+    const end = to || today;
+    return this.accounts.expenseHeadLedger(
+      id,
+      new Date(`${start}T00:00:00.000+05:30`),
+      new Date(`${end}T23:59:59.999+05:30`),
+      this.branch(branchId, user!),
+    );
+  }
+
+  private branch(requested: string | undefined, user: AuthenticatedUser): string | undefined {
+    const admin = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN');
+    if (requested && !admin && !user.branchIds.includes(requested)) throw new ForbiddenException('You are not assigned to this branch');
+    return requested ?? (admin ? undefined : user.branchIds[0]);
   }
 
   @Post('expense-heads')

@@ -192,7 +192,7 @@ describe('SixOrbitHttpService', () => {
     expect(JSON.parse(form.get('data') as string)).toEqual({ fname: 'Test' });
   });
 
-  it('wraps a variation payload in an array, because their variation tasks require one', async () => {
+  it('sends a variation create payload as one JSON object', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ success: true, data: {} }));
     await service.execute(
       request({
@@ -204,7 +204,7 @@ describe('SixOrbitHttpService', () => {
     );
 
     const form = fetchMock.mock.calls[0]![1]!.body as FormData;
-    expect(JSON.parse(form.get('data') as string)).toEqual([{ item_name: 'ABC' }]);
+    expect(JSON.parse(form.get('data') as string)).toEqual({ item_name: 'ABC' });
   });
 
   it('logs the payload it posted, exactly as it went out', async () => {
@@ -222,9 +222,12 @@ describe('SixOrbitHttpService', () => {
       }),
     );
 
-    expect(JSON.parse(recorded[0]!.requestBody as string)).toEqual([
-      { item_name: 'ABC', isvid: '1220' },
-    ]);
+    const form = fetchMock.mock.calls[0]![1]!.body as FormData;
+    expect(JSON.parse(form.get('data') as string)).toEqual({ item_name: 'ABC', isvid: '1220' });
+    expect(JSON.parse(recorded[0]!.requestBody as string)).toEqual({
+      item_name: 'ABC',
+      isvid: '1220',
+    });
   });
 
   it('records no payload for a GET, which has none', async () => {

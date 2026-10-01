@@ -30,7 +30,7 @@ import { useMemo, useState } from 'react';
 import { PageContainer } from '@tiles-erp/ui';
 import type { LedgerAccountItem, LedgerAccountType } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
-import { useBranches } from '../products/branch-prices-api';
+import { AccountBranchSelect, useAccountBranch } from './AccountBranchSelect';
 import {
   useDeleteLedgerAccount,
   useLedgerAccounts,
@@ -97,9 +97,9 @@ const draftOf = (account: LedgerAccountItem): Draft => ({
  * Office have", not "list every bank account we own".
  */
 export function AccountsPage(): JSX.Element {
-  const branches = useBranches();
+  const branch = useAccountBranch();
   const [includeInactive, setIncludeInactive] = useState(false);
-  const accounts = useLedgerAccounts({ includeInactive });
+  const accounts = useLedgerAccounts({ includeInactive, branchId: branch.branchId });
   const save = useSaveLedgerAccount();
   const remove = useDeleteLedgerAccount();
 
@@ -173,13 +173,14 @@ export function AccountsPage(): JSX.Element {
             }
             label={<Typography variant="body2">Show closed</Typography>}
           />
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDraft(blank())}>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDraft({ ...blank(), branchId: branch.branchId })}>
             New account
           </Button>
         </Stack>
       }
     >
       <Stack spacing={1.5}>
+        <AccountBranchSelect {...branch} />
         {notice && (
           <Alert severity="success" onClose={() => setNotice(null)}>
             {notice}
@@ -341,9 +342,9 @@ export function AccountsPage(): JSX.Element {
                   }
                 >
                   <MenuItem value="">Company-wide</MenuItem>
-                  {(branches.data ?? []).map((branch) => (
-                    <MenuItem key={branch.id} value={branch.id}>
-                      {branch.name}
+                  {branch.availableBranches.map((option) => (
+                    <MenuItem key={option.id} value={option.id}>
+                      {option.name}
                     </MenuItem>
                   ))}
                 </TextField>

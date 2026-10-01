@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Inject, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -18,6 +18,7 @@ import type {
   DayCloseStatus,
   DenominationCounts,
   VarianceReport,
+  AuthenticatedUser,
 } from '@tiles-erp/shared-types';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermissions } from '../../auth/decorators/permissions.decorator';
@@ -122,19 +123,25 @@ export class CashCountController {
   @Get()
   @RequirePermissions(PERMISSIONS.CASH_BOOK_READ)
   @ApiOperation({ summary: 'Past closes, newest first' })
-  list(@Query() query: CashCountQueryDto): Promise<CashCountItem[]> {
-    return this.counts.list(query);
+  list(@Query() query: CashCountQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<CashCountItem[]> {
+    return this.counts.list({ ...query, branchId: this.branch(query.branchId, user) });
   }
 
   @Get('variances')
   @RequirePermissions(PERMISSIONS.CASH_BOOK_READ)
   @ApiOperation({ summary: 'How the counts have gone, one line per account' })
-  variances(@Query() query: CashCountQueryDto): Promise<VarianceReport> {
+  variances(@Query() query: CashCountQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<VarianceReport> {
     return this.counts.variances(
       query.from ?? monthStart(),
       query.to ?? new Date().toISOString(),
-      query.branchId,
+      this.branch(query.branchId, user),
     );
+  }
+
+  private branch(requested: string | undefined, user: AuthenticatedUser): string | undefined {
+    const admin = user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN');
+    if (requested && !admin && !user.branchIds.includes(requested)) throw new ForbiddenException('You are not assigned to this branch');
+    return requested ?? (admin ? undefined : user.branchIds[0]);
   }
 
   @Get('status/:accountId')

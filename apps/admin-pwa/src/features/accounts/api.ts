@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CashBook,
   CashCountItem,
@@ -9,6 +9,7 @@ import type {
   CashPosition,
   CashTransferInput,
   ExpenseHeadItem,
+  ExpenseHeadLedger,
   LedgerAccountItem,
   LedgerAccountType,
   OwnerStatement,
@@ -62,13 +63,23 @@ export function useDeleteLedgerAccount() {
   });
 }
 
-export function useExpenseHeads(includeInactive = false) {
+export function useExpenseHeads(includeInactive = false, branchId?: string) {
+  const params = new URLSearchParams();
+  if (includeInactive) params.set('includeInactive', 'true');
+  if (branchId) params.set('branchId', branchId);
   return useQuery({
-    queryKey: [HEADS, includeInactive],
-    queryFn: () =>
-      apiFetch<ExpenseHeadItem[]>(
-        `/ledger-accounts/expense-heads${includeInactive ? '?includeInactive=true' : ''}`,
-      ),
+    queryKey: [HEADS, includeInactive, branchId],
+    queryFn: () => apiFetch<ExpenseHeadItem[]>(`/ledger-accounts/expense-heads?${params}`),
+  });
+}
+
+export function useExpenseHeadLedger(id: string | null, from: string, to: string, branchId?: string) {
+  const params = new URLSearchParams({ from, to });
+  if (branchId) params.set('branchId', branchId);
+  return useQuery({
+    queryKey: [HEADS, 'ledger', id, from, to, branchId],
+    queryFn: () => apiFetch<ExpenseHeadLedger>(`/ledger-accounts/expense-heads/${id}/ledger?${params}`),
+    enabled: Boolean(id && from && to && branchId),
   });
 }
 
@@ -105,6 +116,7 @@ const invalidateBook = (queryClient: ReturnType<typeof useQueryClient>): void =>
   void queryClient.invalidateQueries({ queryKey: [BOOK] });
   void queryClient.invalidateQueries({ queryKey: [KEY] });
   void queryClient.invalidateQueries({ queryKey: [HEADS] });
+  void queryClient.invalidateQueries({ queryKey: ['receipts'] });
 };
 
 export interface CashBookFilters {
@@ -130,12 +142,13 @@ export function useCashBook(filters: CashBookFilters, enabled = true) {
 }
 
 /** Every account on one day: where the money actually is. */
-export function useCashPosition(on: string, branchId?: string) {
+export function useCashPosition(on: string, branchId?: string, enabled = true) {
   const params = new URLSearchParams({ on });
   if (branchId) params.set('branchId', branchId);
   return useQuery({
     queryKey: [BOOK, 'position', on, branchId],
     queryFn: () => apiFetch<CashPosition>(`/cash-book/position?${params.toString()}`),
+    enabled,
   });
 }
 
@@ -186,11 +199,23 @@ export function useDayCloseStatus(accountId: string) {
   });
 }
 
-export function useCashCounts(accountId?: string) {
+/** Statuses used by the multi-account day-close review. */
+export function useDayCloseStatuses(accountIds: string[]) {
+  return useQueries({
+    queries: accountIds.map((accountId) => ({
+      queryKey: [COUNTS, 'status', accountId],
+      queryFn: () => apiFetch<DayCloseStatus>(`/cash-counts/status/${accountId}`),
+      staleTime: 0,
+    })),
+  });
+}
+
+export function useCashCounts(accountId?: string, branchId?: string) {
   const params = new URLSearchParams();
   if (accountId) params.set('accountId', accountId);
+  if (branchId) params.set('branchId', branchId);
   return useQuery({
-    queryKey: [COUNTS, accountId],
+    queryKey: [COUNTS, accountId, branchId],
     queryFn: () => apiFetch<CashCountItem[]>(`/cash-counts?${params.toString()}`),
   });
 }
@@ -233,14 +258,14 @@ export function useReopenDay() {
 
 const OWNERS = 'cash-owners';
 
-const range = (from: string, to: string): string =>
-  new URLSearchParams({ from, to }).toString();
-
 /** Every owner: what they took over the period and what they still hold. */
-export function useOwnerSummary(from: string, to: string) {
+export function useOwnerSummary(from: string, to: string, branchId?: string) {
+  const params = new URLSearchParams({ from, to });
+  if (branchId) params.set('branchId', branchId);
   return useQuery({
-    queryKey: [OWNERS, from, to],
-    queryFn: () => apiFetch<OwnerSummary>(`/cash-book/owners?${range(from, to)}`),
+    queryKey: [OWNERS, from, to, branchId],
+    queryFn: () => apiFetch<OwnerSummary>(`/cash-book/owners?${params}`),
+    enabled: Boolean(branchId),
   });
 }
 
@@ -250,14 +275,16 @@ export function useOwnerStatement(
   from: string,
   to: string,
   includeReversed = false,
+  branchId?: string,
 ) {
   const params = new URLSearchParams({ from, to });
+  if (branchId) params.set('branchId', branchId);
   if (includeReversed) params.set('includeReversed', 'true');
   return useQuery({
-    queryKey: [OWNERS, accountId, from, to, includeReversed],
+    queryKey: [OWNERS, accountId, from, to, includeReversed, branchId],
     queryFn: () =>
       apiFetch<OwnerStatement>(`/cash-book/owners/${accountId}?${params.toString()}`),
-    enabled: Boolean(accountId),
+    enabled: Boolean(accountId && branchId),
   });
 }
 

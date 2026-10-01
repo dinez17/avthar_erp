@@ -84,8 +84,8 @@ export class SixOrbitHttpService {
 
       if (spec.method === 'POST') {
         // Their POSTs carry one multipart field called `data` holding a JSON string —
-        // an object for customer tasks, a one-element array for variation tasks. The
-        // shape is not interchangeable, so it comes from the task registry.
+        // an object for the variation and customer writes currently in use. The shape
+        // comes from the task registry so the form value matches each endpoint.
         const payload = spec.bodyShape === 'array' && !Array.isArray(data) ? [data] : data;
         sentBody = JSON.stringify(payload ?? {});
         const form = new FormData();

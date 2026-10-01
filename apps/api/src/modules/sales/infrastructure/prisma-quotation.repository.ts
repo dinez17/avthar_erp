@@ -184,7 +184,12 @@ export class PrismaQuotationRepository implements QuotationRepository {
       where: {
         id: userId,
         deletedAt: null,
-        roles: { some: { role: { isSalesRole: true, deletedAt: null } } },
+        roles: {
+          some: { role: { isSalesRole: true, deletedAt: null } },
+          // An administrator may also hold an operational role. Administrative access
+          // must win so their quotation list is never reduced to their own documents.
+          none: { role: { name: { in: ['ADMIN', 'SUPER_ADMIN'] }, deletedAt: null } },
+        },
       },
       select: { id: true },
     });

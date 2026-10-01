@@ -100,7 +100,11 @@ export function QuotationsPage(): JSX.Element {
   const [branchId, setBranchId] = useSessionBranchId();
   const [salesmanUserId, setSalesmanUserId] = useState('');
   const salesmen = useSalesmen(branchId || undefined);
-  const isSalesUser = Boolean(user && salesmen.data?.some((salesman) => salesman.id === user.id));
+  // ADMIN and SUPER_ADMIN keep unrestricted quotation access even when another one
+  // of their assigned roles was accidentally marked as a sales role.
+  const isSalesUser = Boolean(
+    !canChangeBranch && user && salesmen.data?.some((salesman) => salesman.id === user.id),
+  );
   useEffect(() => {
     if (!canChangeBranch && user?.branchIds.length) {
       setBranchId((current) => user.branchIds.includes(current) ? current : user.branchIds[0]!);

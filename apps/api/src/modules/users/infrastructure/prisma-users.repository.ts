@@ -80,7 +80,12 @@ export class PrismaUsersRepository implements UsersRepository {
         // a quotation or an order.
         isHidden: false,
         ...(branchId ? { branches: { some: { branchId } } } : {}),
-        roles: { some: { role: { isSalesRole: true, deletedAt: null } } },
+        roles: {
+          some: { role: { isSalesRole: true, deletedAt: null } },
+          // Privileged users can hold extra operational roles without becoming selectable
+          // salespeople or having their own sales screens restricted.
+          none: { role: { name: { in: ['ADMIN', 'SUPER_ADMIN'] }, deletedAt: null } },
+        },
       },
       select: { id: true, firstName: true, lastName: true, email: true },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],

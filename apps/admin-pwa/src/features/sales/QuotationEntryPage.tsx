@@ -322,8 +322,8 @@ export function QuotationEntryPage(): JSX.Element {
 
   // A logged-in salesperson always credits themselves; the picker is locked for them.
   const isSalesUser = useMemo(
-    () => Boolean(branchId && user && (salesmen.data ?? []).some((s) => s.id === user.id)),
-    [branchId, salesmen.data, user],
+    () => Boolean(!canChangeBranch && branchId && user && (salesmen.data ?? []).some((s) => s.id === user.id)),
+    [branchId, canChangeBranch, salesmen.data, user],
   );
 
   useEffect(() => {

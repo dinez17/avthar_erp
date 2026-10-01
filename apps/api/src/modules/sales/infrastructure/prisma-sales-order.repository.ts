@@ -470,7 +470,10 @@ export class PrismaSalesOrderRepository implements SalesOrderRepository {
       where: {
         id: userId,
         deletedAt: null,
-        roles: { some: { role: { isSalesRole: true, deletedAt: null } } },
+        roles: {
+          some: { role: { isSalesRole: true, deletedAt: null } },
+          none: { role: { name: { in: ['ADMIN', 'SUPER_ADMIN'] }, deletedAt: null } },
+        },
       },
       select: { id: true },
     });

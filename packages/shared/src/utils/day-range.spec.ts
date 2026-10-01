@@ -5,14 +5,8 @@ describe('startOfDayIso / endOfDayIso', () => {
     const start = new Date(startOfDayIso('2026-08-08'));
     const end = new Date(endOfDayIso('2026-08-08'));
 
-    expect(start.getFullYear()).toBe(2026);
-    expect(start.getMonth()).toBe(7);
-    expect(start.getDate()).toBe(8);
-    expect(start.getHours()).toBe(0);
-
-    expect(end.getDate()).toBe(8);
-    expect(end.getHours()).toBe(23);
-    expect(end.getMinutes()).toBe(59);
+    expect(start.toISOString()).toBe('2026-08-07T18:30:00.000Z');
+    expect(end.toISOString()).toBe('2026-08-08T18:29:59.999Z');
   });
 
   it('ends after it starts, by just under a day', () => {
@@ -27,16 +21,16 @@ describe('startOfDayIso / endOfDayIso', () => {
    * morning fell outside a range ending "today".
    */
   it('includes something that happened during the day, which a bare parse would not', () => {
-    const middayLocal = new Date(2026, 7, 8, 12, 0, 0);
-    expect(middayLocal.getTime()).toBeLessThanOrEqual(new Date(endOfDayIso('2026-08-08')).getTime());
-    expect(middayLocal.getTime()).toBeGreaterThanOrEqual(
+    const middayInIndia = new Date('2026-08-08T12:00:00.000+05:30');
+    expect(middayInIndia.getTime()).toBeLessThanOrEqual(new Date(endOfDayIso('2026-08-08')).getTime());
+    expect(middayInIndia.getTime()).toBeGreaterThanOrEqual(
       new Date(startOfDayIso('2026-08-08')).getTime(),
     );
   });
 
   it('handles a month and year boundary', () => {
-    expect(new Date(startOfDayIso('2026-01-01')).getMonth()).toBe(0);
-    expect(new Date(endOfDayIso('2026-12-31')).getDate()).toBe(31);
+    expect(startOfDayIso('2026-01-01')).toBe('2025-12-31T18:30:00.000Z');
+    expect(endOfDayIso('2026-12-31')).toBe('2026-12-31T18:29:59.999Z');
   });
 });
 
@@ -46,7 +40,9 @@ describe('toDateInput', () => {
     expect(toDateInput(new Date(2026, 0, 1, 0, 30))).toBe('2026-01-01');
   });
 
-  it('round-trips through startOfDayIso', () => {
-    expect(toDateInput(new Date(startOfDayIso('2026-08-08')))).toBe('2026-08-08');
+  it('does not depend on the operating system date format', () => {
+    const locale = jest.spyOn(Date.prototype, 'toLocaleDateString').mockReturnValue('08/08/2026');
+    expect(toDateInput(new Date(2026, 7, 8))).toBe('2026-08-08');
+    locale.mockRestore();
   });
 });

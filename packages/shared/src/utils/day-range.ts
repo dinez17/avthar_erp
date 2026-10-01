@@ -6,23 +6,28 @@
  * "up to today" silently excluded everything that happened today: in India that is the
  * whole working day, and the report comes back empty for no visible reason.
  *
- * These two read the day in the **browser's own zone**, which is the one the person
- * typing it was thinking in, and stretch it to cover the day end to end.
+ * The ERP's business day is India time. A workstation's display format or time-zone
+ * preference must not move a report into the previous or next day.
  */
 
-/** Midnight at the start of that local day, as an instant. */
+/** Midnight at the start of that India business day, as an instant. */
 export function startOfDayIso(localDate: string): string {
-  const [year, month, day] = localDate.split('-').map(Number);
-  return new Date(year!, (month ?? 1) - 1, day ?? 1, 0, 0, 0, 0).toISOString();
+  return new Date(`${localDate}T00:00:00.000+05:30`).toISOString();
 }
 
-/** The last millisecond of that local day, so the day itself is included. */
+/** The last millisecond of that India business day, so the day itself is included. */
 export function endOfDayIso(localDate: string): string {
-  const [year, month, day] = localDate.split('-').map(Number);
-  return new Date(year!, (month ?? 1) - 1, day ?? 1, 23, 59, 59, 999).toISOString();
+  return new Date(`${localDate}T23:59:59.999+05:30`).toISOString();
 }
 
-/** A local date as a picker wants it: `yyyy-mm-dd`, never shifted by a zone. */
+/**
+ * A date as an HTML picker requires it: `yyyy-mm-dd`.
+ * `toLocaleDateString` is deliberately avoided because its output can follow an end
+ * user's OS date format and produce a value that the date input rejects.
+ */
 export function toDateInput(date: Date): string {
-  return date.toLocaleDateString('en-CA');
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

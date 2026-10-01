@@ -17,6 +17,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
+import { toDateInput } from '@tiles-erp/shared';
 import { useSaveShortcut } from '@tiles-erp/ui';
 import type { DriverDueSummary } from '@tiles-erp/shared-types';
 import { ApiError } from '../../lib/api-client';
@@ -26,7 +27,7 @@ import { useCreateHandover, useDriverDue } from './driver-cash-api';
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
-const today = (): string => new Date().toLocaleDateString('en-CA');
+const today = (): string => toDateInput(new Date());
 
 /**
  * Taking cash off a driver at the counter.

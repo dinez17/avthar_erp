@@ -20,7 +20,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
-import { AGEING_BUCKETS, AGEING_BUCKET_LABELS, type CsvValue } from '@tiles-erp/shared';
+import { AGEING_BUCKETS, AGEING_BUCKET_LABELS, toDateInput, type CsvValue } from '@tiles-erp/shared';
 import { PageContainer } from '@tiles-erp/ui';
 import { ApiError } from '../../lib/api-client';
 import { useAuth } from '../../auth/AuthProvider';
@@ -43,9 +43,9 @@ const rupees = (value: number): string => `₹${money(value)}`;
 const number = (value: number): string => value.toLocaleString('en-IN');
 
 const monthStart = (date = new Date()): string =>
-  new Date(date.getFullYear(), date.getMonth(), 1).toLocaleDateString('en-CA');
+  toDateInput(new Date(date.getFullYear(), date.getMonth(), 1));
 
-const today = (): string => new Date().toLocaleDateString('en-CA');
+const today = (): string => toDateInput(new Date());
 
 const TABS = [
   { key: 'freight', label: 'Freight collection' },

@@ -12,7 +12,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useState } from 'react';
-import { endOfDayIso, startOfDayIso } from '@tiles-erp/shared';
+import { endOfDayIso, startOfDayIso, toDateInput } from '@tiles-erp/shared';
 import { LoadingOverlay, PageContainer } from '@tiles-erp/ui';
 import type { GstSummary, Gstr1Return } from '@tiles-erp/shared-types';
 import { apiFetch } from '../../lib/api-client';
@@ -28,10 +28,10 @@ const rupees = (value: number): string => `₹${money(value)}`;
 
 /** The first and last day of the month a date falls in — how a GST period is chosen. */
 const monthStart = (date = new Date()): string =>
-  new Date(date.getFullYear(), date.getMonth(), 1).toLocaleDateString('en-CA');
+  toDateInput(new Date(date.getFullYear(), date.getMonth(), 1));
 
 const monthEnd = (date = new Date()): string =>
-  new Date(date.getFullYear(), date.getMonth() + 1, 0).toLocaleDateString('en-CA');
+  toDateInput(new Date(date.getFullYear(), date.getMonth() + 1, 0));
 
 /** The period query string every endpoint on this page takes. */
 function periodParams(from: string, to: string, branchId: string): string {

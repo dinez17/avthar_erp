@@ -160,3 +160,47 @@ export function useBulkSetStock() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY] }),
   });
 }
+
+export interface SmartStockCheckItem {
+  productId: string;
+  sku: string;
+  productName: string;
+  brandName: string;
+  sizeMm: string | null;
+  piecesPerBox: number;
+  baseUom: string;
+  bookQtyBoxes: number;
+  lastCheckedAt: string | null;
+  lastCountedQtyBoxes: number | null;
+  lastDifferenceBoxes: number | null;
+  lastMovementAt: string | null;
+  due: boolean;
+}
+
+export interface SmartStockCheckResponse {
+  items: SmartStockCheckItem[];
+  totalProducts: number;
+  dueProducts: number;
+}
+
+export function useSmartStockCheck(branchId: string, godownId: string, intervalMinutes: number, mode: string, search: string) {
+  const params = new URLSearchParams({ branchId, godownId, intervalMinutes: String(intervalMinutes), mode });
+  if (search.trim()) params.set('search', search.trim());
+  return useQuery({
+    queryKey: [KEY, 'smart-check', branchId, godownId, intervalMinutes, mode, search],
+    queryFn: () => apiFetch<SmartStockCheckResponse>(`/stock/smart-check?${params.toString()}`),
+    enabled: Boolean(branchId && godownId),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useVerifySmartStock() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { branchId: string; godownId: string; productId: string; boxes: number; pieces: number }) =>
+      apiFetch<{ adjusted: boolean; differenceBoxes: number }>('/stock/smart-check', {
+        method: 'POST', body: JSON.stringify(input),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY] }),
+  });
+}

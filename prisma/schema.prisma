@@ -166,6 +166,7 @@ model Branch {
   productPrices     ProductBranchPrice[]
   stockMovements    StockMovement[]
   stockBalances     StockBalance[]
+  stockVerifications StockVerification[]
   purchaseOrders    PurchaseOrder[]
   goodsReceipts     GoodsReceipt[]
   purchaseInvoices  PurchaseInvoice[]
@@ -207,6 +208,7 @@ model Godown {
   gates           Gate[]
   stockMovements  StockMovement[]
   stockBalances   StockBalance[]
+  stockVerifications StockVerification[]
   goodsReceipts   GoodsReceipt[]
   purchaseInvoices PurchaseInvoice[]
   purchaseReturns PurchaseReturn[]
@@ -478,6 +480,7 @@ model Product {
   branchPrices         ProductBranchPrice[]
   stockMovements       StockMovement[]
   stockBalances        StockBalance[]
+  stockVerifications   StockVerification[]
   transferLines        StockTransferLine[]
   purchaseOrderLines   PurchaseOrderLine[]
   goodsReceiptLines    GoodsReceiptLine[]
@@ -887,6 +890,30 @@ model StockBalance {
   @@index([branchId, godownId])
   @@index([productId])
   @@map("stock_balances")
+}
+
+/// A physical showroom/godown verification. Unlike a stock movement this is
+/// recorded even when the physical quantity agrees with the book quantity.
+model StockVerification {
+  id String @id @default(uuid()) @db.Uuid
+
+  productId String @db.Uuid
+  branchId  String @db.Uuid
+  godownId  String @db.Uuid
+
+  bookQtyBoxes    Decimal @db.Decimal(14, 3)
+  countedQtyBoxes Decimal @db.Decimal(14, 3)
+  differenceBoxes Decimal @db.Decimal(14, 3)
+  checkedBy String? @db.Uuid
+  checkedAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  godown Godown @relation(fields: [godownId], references: [id], onDelete: Restrict)
+
+  @@index([branchId, godownId, checkedAt])
+  @@index([productId, branchId, godownId, checkedAt])
+  @@map("stock_verifications")
 }
 
 /// A completed stock transfer between two godowns (same or different branches).

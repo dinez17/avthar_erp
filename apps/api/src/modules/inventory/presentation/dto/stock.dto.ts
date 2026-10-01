@@ -11,6 +11,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -86,6 +87,50 @@ export class StockCheckQueryDto extends PaginationQueryDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID('4')
   branchId!: string;
+}
+
+export class SmartStockCheckQueryDto {
+  @IsUUID('4')
+  branchId!: string;
+
+  @IsUUID('4')
+  godownId!: string;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 0 })
+  @Min(15)
+  @Max(1440)
+  intervalMinutes = 60;
+
+  @IsIn(['PRIORITY', 'RANDOM', 'RECENT'])
+  @IsOptional()
+  mode?: 'PRIORITY' | 'RANDOM' | 'RECENT';
+
+  @IsString()
+  @MaxLength(100)
+  @IsOptional()
+  search?: string;
+}
+
+export class VerifySmartStockDto {
+  @IsUUID('4')
+  branchId!: string;
+
+  @IsUUID('4')
+  godownId!: string;
+
+  @IsUUID('4')
+  productId!: string;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  boxes!: number;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0)
+  pieces!: number;
 }
 
 export class StockMovementQueryDto extends PaginationQueryDto {

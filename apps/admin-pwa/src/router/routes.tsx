@@ -32,6 +32,7 @@ import { StockPage } from '../features/inventory/StockPage';
 import { StockCheckPage } from '../features/inventory/StockCheckPage';
 import { ProductStockCheckPage } from '../features/inventory/ProductStockCheckPage';
 import { StockCountPage } from '../features/inventory/StockCountPage';
+import { SmartStockCheckPage } from '../features/inventory/SmartStockCheckPage';
 import { TransfersPage } from '../features/inventory/TransfersPage';
 import { TransferPrintPage } from '../features/inventory/TransferPrintPage';
 import { StockReportsPage } from '../features/inventory/StockReportsPage';
@@ -171,6 +172,7 @@ export const router: ReturnType<typeof createBrowserRouter> = createBrowserRoute
               { path: 'stock/check', element: <StockCheckPage /> },
               { path: 'stock/product-check', element: <ProductStockCheckPage /> },
               { path: 'stock/count', element: <StockCountPage /> },
+              { path: 'stock/smart-check', element: <SmartStockCheckPage /> },
               { path: 'stock/transfers', element: <TransfersPage /> },
               { path: 'stock/reports', element: <StockReportsPage /> },
               { path: 'purchase-orders', element: <PurchaseOrdersPage /> },

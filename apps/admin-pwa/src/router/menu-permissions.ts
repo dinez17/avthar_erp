@@ -22,6 +22,7 @@ export const MENU_PERMISSIONS: Record<string, PermissionValue> = {
   '/stock/check': PERMISSIONS.STOCK_READ,
   '/stock/product-check': PERMISSIONS.STOCK_READ,
   '/stock/count': PERMISSIONS.STOCK_READ,
+  '/stock/smart-check': PERMISSIONS.STOCK_ADJUST,
   '/stock/transfers': PERMISSIONS.STOCK_READ,
   '/stock/reports': PERMISSIONS.STOCK_READ,
   '/product-audit': PERMISSIONS.PRODUCT_READ,

@@ -280,6 +280,36 @@ export class PrismaVehicleRepository implements VehicleRepository {
 
   async create(data: CreateVehicleInput & { createdBy: UUID }): Promise<VehicleItem> {
     await this.assertTransporter(data.transporterId);
+    const deleted = await this.prisma.vehicle.findUnique({
+      where: { number: data.number },
+      select: { id: true, deletedAt: true },
+    });
+    if (deleted?.deletedAt) {
+      // Registration numbers remain globally unique so gate passes and transfers keep
+      // pointing at the same physical vehicle. Creating a previously deleted number
+      // therefore restores that row with the newly entered master data.
+      const restored = await this.prisma.vehicle.update({
+        where: { id: deleted.id },
+        data: {
+          type: data.type ?? 'TRUCK',
+          ownership: data.ownership ?? 'OWNED',
+          transporterId: data.transporterId ?? null,
+          capacityTons: data.capacityTons ?? null,
+          make: data.make?.trim() || null,
+          insuranceExpiry: data.insuranceExpiry ? new Date(data.insuranceExpiry) : null,
+          fitnessExpiry: data.fitnessExpiry ? new Date(data.fitnessExpiry) : null,
+          notes: data.notes?.trim() || null,
+          isActive: data.isActive ?? true,
+          deletedAt: null,
+          deletedBy: null,
+          updatedBy: data.createdBy,
+          version: { increment: 1 },
+        },
+        include: vehicleInclude,
+      });
+      return toVehicle(restored);
+    }
+    if (deleted) throw new ConflictError(`Vehicle "${data.number}" is already registered`);
     const row = await this.prisma.vehicle.create({
       data: {
         number: data.number,

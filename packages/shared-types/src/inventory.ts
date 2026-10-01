@@ -45,6 +45,8 @@ export interface StockMovementItem {
   type: MovementType;
   direction: MovementDirection;
   qtyBoxes: number;
+  piecesPerBox: number;
+  baseUom: ProductUom;
   refType: string | null;
   refNumber: string | null;
   reason: string | null;

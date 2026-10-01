@@ -43,10 +43,10 @@ const quantity = (line: SalesInvoiceLineItem): string =>
 
 /** Keep piece-only products out of the BOX column on every print layout. */
 const printedBoxes = (line: SalesInvoiceLineItem): number =>
-  line.baseUom === 'PIECE' ? 0 : line.boxes;
+  line.baseUom === 'PIECE' || line.piecesPerBox === 1 ? 0 : line.boxes;
 
 const printedPieces = (line: SalesInvoiceLineItem): number =>
-  line.baseUom === 'PIECE'
+  line.baseUom === 'PIECE' || line.piecesPerBox === 1
     ? Math.round(line.qtyBoxes * Math.max(line.piecesPerBox, 1))
     : line.pieces;
 

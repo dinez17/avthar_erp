@@ -3,6 +3,7 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { Autocomplete, Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material';
 import type { ColDef } from 'ag-grid-community';
 import { useMemo, useState } from 'react';
+import { splitBoxesPieces } from '@tiles-erp/shared';
 import { usePagination } from '@tiles-erp/hooks';
 import { PageContainer } from '@tiles-erp/ui';
 import type { ProductItem, ProfitRow, StockMovementItem } from '@tiles-erp/shared-types';
@@ -41,10 +42,19 @@ function SalesReportPage({ kind }: { kind: ReportKind }): JSX.Element {
   const movements = useStockMovements(pagination.query, { branchId: branchId || undefined, productId: productId || undefined, fromDate: from, toDate: to }, kind === 'TRANSACTIONS' && Boolean(productId));
   const sales = useProfitReport({ grouping: kind === 'SALESMAN' ? 'SALESMAN' : 'PRODUCT', from, to, branchId: branchId || undefined, productId: productId || undefined, salesmanUserId: salesmanUserId || undefined });
 
+  const movementQuantity = (row: StockMovementItem): { boxes: number; pieces: number } => {
+    if (row.baseUom === 'PIECE' || row.piecesPerBox === 1) {
+      return { boxes: 0, pieces: Math.round(row.qtyBoxes * Math.max(row.piecesPerBox, 1)) };
+    }
+    return splitBoxesPieces(row.qtyBoxes, row.piecesPerBox);
+  };
+
   const movementColumns = useMemo<ColDef<StockMovementItem>[]>(() => [
     { field: 'movementDate', headerName: 'Date', valueFormatter: (p) => new Date(String(p.value)).toLocaleDateString('en-IN'), minWidth: 105 },
     { field: 'type', headerName: 'Transaction', minWidth: 130 }, { field: 'direction', headerName: 'In/Out', maxWidth: 85 },
-    { field: 'qtyBoxes', headerName: 'Boxes', maxWidth: 100 }, { field: 'refNumber', headerName: 'Document', minWidth: 140 },
+    { headerName: 'Boxes', maxWidth: 100, valueGetter: (p) => p.data ? movementQuantity(p.data).boxes : 0 },
+    { headerName: 'Pcs', maxWidth: 90, valueGetter: (p) => p.data ? movementQuantity(p.data).pieces : 0 },
+    { field: 'refNumber', headerName: 'Document', minWidth: 140 },
     { field: 'branchName', headerName: 'Branch', minWidth: 160 }, { field: 'godownName', headerName: 'Godown', minWidth: 150 },
     { field: 'batchNo', headerName: 'Batch', minWidth: 100 }, { field: 'shade', headerName: 'Shade', minWidth: 100 },
     { field: 'reason', headerName: 'Reason', minWidth: 170 },
@@ -52,12 +62,8 @@ function SalesReportPage({ kind }: { kind: ReportKind }): JSX.Element {
   const salesColumns = useMemo<ColDef<ProfitRow>[]>(() => [
     { field: 'label', headerName: kind === 'SALESMAN' ? 'Salesman' : 'Product', minWidth: 240 },
     { field: 'subLabel', headerName: kind === 'SALESMAN' ? 'Details' : 'Brand', minWidth: 140 },
-    ...(kind === 'PRODUCT_SALES'
-      ? [
-          { field: 'boxes' as const, headerName: 'Boxes', maxWidth: 105 },
-          { field: 'pieces' as const, headerName: 'Pcs', maxWidth: 90 },
-        ]
-      : [{ field: 'qtyBoxes' as const, headerName: 'Boxes sold', maxWidth: 120 }]),
+    { field: 'boxes', headerName: 'Boxes', maxWidth: 105 },
+    { field: 'pieces', headerName: 'Pcs', maxWidth: 90 },
     { field: 'revenue', headerName: 'Sales ex GST', valueFormatter: (p) => money(Number(p.value)), minWidth: 140 },
     { field: 'cost', headerName: 'Cost', valueFormatter: (p) => money(Number(p.value)), minWidth: 130 },
     { field: 'margin', headerName: 'Margin', valueFormatter: (p) => money(Number(p.value)), minWidth: 130 },
@@ -67,11 +73,11 @@ function SalesReportPage({ kind }: { kind: ReportKind }): JSX.Element {
 
   type ExportRow = Record<string, string | number | null | undefined>;
   const exportRows: ExportRow[] = kind === 'TRANSACTIONS'
-    ? (movements.data?.items ?? []).map((row) => ({ date: row.movementDate, sku: row.sku, product: row.productName, transaction: row.type, direction: row.direction, boxes: row.qtyBoxes, document: row.refNumber, branch: row.branchName, godown: row.godownName, batch: row.batchNo, shade: row.shade }))
-    : reportRows.map((row) => ({ label: row.label, detail: row.subLabel, boxes: kind === 'PRODUCT_SALES' ? row.boxes : row.qtyBoxes, pieces: row.pieces, revenue: row.revenue, cost: row.cost, margin: row.margin, marginPct: row.marginPct }));
+    ? (movements.data?.items ?? []).map((row) => ({ date: row.movementDate, sku: row.sku, product: row.productName, transaction: row.type, direction: row.direction, boxes: movementQuantity(row).boxes, pieces: movementQuantity(row).pieces, document: row.refNumber, branch: row.branchName, godown: row.godownName, batch: row.batchNo, shade: row.shade }))
+    : reportRows.map((row) => ({ label: row.label, detail: row.subLabel, boxes: row.boxes, pieces: row.pieces, revenue: row.revenue, cost: row.cost, margin: row.margin, marginPct: row.marginPct }));
   const exportColumns: ExportColumn<ExportRow>[] = kind === 'TRANSACTIONS'
-    ? ['Date', 'SKU', 'Product', 'Transaction', 'Direction', 'Boxes', 'Document', 'Branch', 'Godown', 'Batch', 'Shade'].map((header, index) => ({ header, value: (row) => row[['date', 'sku', 'product', 'transaction', 'direction', 'boxes', 'document', 'branch', 'godown', 'batch', 'shade'][index]!] }))
-    : [{ header: kind === 'SALESMAN' ? 'Salesman' : 'Product', value: (row) => row.label }, { header: 'Details', value: (row) => row.detail }, { header: kind === 'PRODUCT_SALES' ? 'Boxes' : 'Boxes sold', value: (row) => row.boxes }, ...(kind === 'PRODUCT_SALES' ? [{ header: 'Pcs', value: (row: ExportRow) => row.pieces }] : []), { header: 'Sales ex GST', value: (row) => row.revenue }, { header: 'Cost', value: (row) => row.cost }, { header: 'Margin', value: (row) => row.margin }, { header: 'Margin %', value: (row) => row.marginPct }];
+    ? ['Date', 'SKU', 'Product', 'Transaction', 'Direction', 'Boxes', 'Pcs', 'Document', 'Branch', 'Godown', 'Batch', 'Shade'].map((header, index) => ({ header, value: (row) => row[['date', 'sku', 'product', 'transaction', 'direction', 'boxes', 'pieces', 'document', 'branch', 'godown', 'batch', 'shade'][index]!] }))
+    : [{ header: kind === 'SALESMAN' ? 'Salesman' : 'Product', value: (row) => row.label }, { header: 'Details', value: (row) => row.detail }, { header: 'Boxes', value: (row) => row.boxes }, { header: 'Pcs', value: (row) => row.pieces }, { header: 'Sales ex GST', value: (row) => row.revenue }, { header: 'Cost', value: (row) => row.cost }, { header: 'Margin', value: (row) => row.margin }, { header: 'Margin %', value: (row) => row.marginPct }];
   const exportName = `${kind.toLowerCase()}-${from}-to-${to}`;
 
   return <PageContainer title={META[kind].title} subtitle={META[kind].subtitle} actions={<Stack direction="row" spacing={1}><Button variant="outlined" startIcon={<DownloadIcon />} disabled={!exportRows.length} onClick={() => downloadTableExcel(`${exportName}.xls`, META[kind].title, exportColumns, exportRows)}>Excel</Button><Button variant="outlined" startIcon={<PictureAsPdfIcon />} disabled={!exportRows.length} onClick={() => downloadTablePdf(`${exportName}.pdf`, META[kind].title, exportColumns, exportRows)}>PDF</Button></Stack>}>
@@ -86,7 +92,7 @@ function SalesReportPage({ kind }: { kind: ReportKind }): JSX.Element {
       {kind === 'TRANSACTIONS' && !productId && <Paper variant="outlined" sx={{ p: 3, textAlign: 'center' }}><Typography color="text.secondary">Search and select a product to view its transactions.</Typography></Paper>}
       {kind === 'TRANSACTIONS' && productId && <DataTable exportable={false} rows={movements.data?.items ?? []} columns={movementColumns} meta={movements.data?.meta} pagination={pagination} loading={movements.isFetching} searchPlaceholder="Search document, batch or shade…" height={600} />}
       {kind !== 'TRANSACTIONS' && <DataTable exportable={false} rows={reportRows} columns={salesColumns} loading={sales.isFetching} height={600} />}
-      {kind !== 'TRANSACTIONS' && <Box sx={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'wrap' }}><Typography fontWeight={700}>Total boxes: {kind === 'PRODUCT_SALES' ? reportRows.reduce((sum, row) => sum + row.boxes, 0) : reportRows.reduce((sum, row) => sum + row.qtyBoxes, 0).toFixed(3)}</Typography>{kind === 'PRODUCT_SALES' && <Typography fontWeight={700}>Total pcs: {reportRows.reduce((sum, row) => sum + row.pieces, 0)}</Typography>}<Typography fontWeight={700}>Sales ex GST: {money(reportRows.reduce((sum, row) => sum + row.revenue, 0))}</Typography></Box>}
+      {kind !== 'TRANSACTIONS' && <Box sx={{ display: 'flex', gap: 3, justifyContent: 'flex-end', flexWrap: 'wrap' }}><Typography fontWeight={700}>Total boxes: {reportRows.reduce((sum, row) => sum + row.boxes, 0)}</Typography><Typography fontWeight={700}>Total pcs: {reportRows.reduce((sum, row) => sum + row.pieces, 0)}</Typography><Typography fontWeight={700}>Sales ex GST: {money(reportRows.reduce((sum, row) => sum + row.revenue, 0))}</Typography></Box>}
     </Stack>
   </PageContainer>;
 }

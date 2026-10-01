@@ -28,6 +28,10 @@ describe('formatBoxPieces', () => {
     expect(formatBoxPieces(12, 1, true)).toBe('12 pcs');
   });
 
+  it('treats one-piece boxes as pieces even when the base UOM is BOX', () => {
+    expect(formatBoxPieces(85, 1)).toBe('85 pcs');
+  });
+
   it('never prints a decimal box figure', () => {
     expect(formatBoxPieces(1.25, 4)).toBe('1 box 1 pcs');
     expect(formatBoxPieces(6.75, 4)).toBe('6 box 3 pcs');

@@ -73,7 +73,15 @@ export class PrismaProfitRepository implements ProfitRepository {
         lineSubTotal: true,
         unitCost: true,
         costEstimated: true,
-        product: { select: { sku: true, name: true, brand: { select: { name: true } } } },
+        product: {
+          select: {
+            sku: true,
+            name: true,
+            piecesPerBox: true,
+            baseUom: true,
+            brand: { select: { name: true } },
+          },
+        },
         salesInvoice: {
           select: {
             id: true,
@@ -118,8 +126,11 @@ export class PrismaProfitRepository implements ProfitRepository {
       bucket.revenue = round2(bucket.revenue + revenue);
       bucket.cost = round2(bucket.cost + cost);
       bucket.qtyBoxes = round3(bucket.qtyBoxes + qtyBoxes);
-      bucket.boxes += line.boxes;
-      bucket.pieces += line.pieces;
+      const pieceOnly = line.product.baseUom === 'PIECE' || line.product.piecesPerBox === 1;
+      bucket.boxes += pieceOnly ? 0 : line.boxes;
+      bucket.pieces += pieceOnly
+        ? Math.round(qtyBoxes * Math.max(line.product.piecesPerBox, 1))
+        : line.pieces;
       if (!hasCost) bucket.revenueWithoutCost = round2(bucket.revenueWithoutCost + revenue);
       if (hasCost && line.costEstimated) {
         bucket.revenueEstimatedCost = round2(bucket.revenueEstimatedCost + revenue);
@@ -167,7 +178,13 @@ export class PrismaProfitRepository implements ProfitRepository {
     grouping: ProfitGrouping,
     line: {
       productId: string;
-      product: { sku: string; name: string; brand: { name: string } };
+      product: {
+        sku: string;
+        name: string;
+        piecesPerBox: number;
+        baseUom: string;
+        brand: { name: string };
+      };
       salesInvoice: {
         id: string;
         invoiceNumber: string;

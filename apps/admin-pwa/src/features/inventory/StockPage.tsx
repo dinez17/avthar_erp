@@ -86,7 +86,7 @@ export function StockPage(): JSX.Element {
         cellStyle: { fontWeight: 600 },
         // Box-based products show whole boxes; piece-based stock has no box figure.
         valueGetter: (p) =>
-          p.data && p.data.baseUom !== 'PIECE'
+          p.data && p.data.baseUom !== 'PIECE' && p.data.piecesPerBox !== 1
             ? splitBoxesPieces(p.data.qtyBoxes, p.data.piecesPerBox).boxes
             : '',
       },
@@ -97,7 +97,7 @@ export function StockPage(): JSX.Element {
         // Piece-based products report their full piece count; others the loose remainder.
         valueGetter: (p) => {
           if (!p.data) return '';
-          return p.data.baseUom === 'PIECE'
+          return p.data.baseUom === 'PIECE' || p.data.piecesPerBox === 1
             ? Math.round(p.data.qtyPieces)
             : splitBoxesPieces(p.data.qtyBoxes, p.data.piecesPerBox).pieces;
         },

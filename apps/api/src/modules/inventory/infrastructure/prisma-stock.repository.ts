@@ -513,7 +513,7 @@ export class PrismaStockRepository implements StockRepository {
     };
 
     const include = {
-      product: { select: { sku: true, name: true } },
+      product: { select: { sku: true, name: true, piecesPerBox: true, baseUom: true } },
       branch: { select: { name: true } },
       godown: { select: { name: true } },
       gate: { select: { name: true } },
@@ -547,6 +547,8 @@ export class PrismaStockRepository implements StockRepository {
         type: row.type,
         direction: row.direction,
         qtyBoxes: Number(row.qtyBoxes),
+        piecesPerBox: row.product.piecesPerBox,
+        baseUom: row.product.baseUom,
         refType: row.refType,
         refNumber: row.refNumber,
         reason: row.reason,

@@ -34,7 +34,7 @@ export const formatStockQuantity = (
   sqftPerBox: number,
   baseUom: StockUom,
 ): string => {
-  if (baseUom === 'PIECE') {
+  if (baseUom === 'PIECE' || piecesPerBox === 1) {
     return `${Math.round(qtyBoxes * piecesPerBox)} pcs`;
   }
   if (baseUom === 'SQFT') {
@@ -55,7 +55,7 @@ export const formatBoxPieces = (
   pieceOnly = false,
 ): string => {
   const perBox = piecesPerBox > 0 ? piecesPerBox : 1;
-  if (pieceOnly) return `${Math.round(qtyBoxes * perBox)} pcs`;
+  if (pieceOnly || perBox === 1) return `${Math.round(qtyBoxes * perBox)} pcs`;
 
   const { boxes, pieces } = splitBoxesPieces(qtyBoxes, perBox);
   if (boxes === 0 && pieces === 0) return '0';

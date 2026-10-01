@@ -59,7 +59,9 @@ export class PrismaDispatchReportRepository implements DispatchReportRepository 
         boxes: true,
         pieces: true,
         qtyBoxes: true,
-        product: { select: { sku: true, name: true, sizeMm: true } },
+        product: {
+          select: { sku: true, name: true, sizeMm: true, piecesPerBox: true, baseUom: true },
+        },
         salesInvoice: {
           select: {
             id: true,
@@ -109,6 +111,8 @@ export class PrismaDispatchReportRepository implements DispatchReportRepository 
 
     const rows: DispatchedProductRow[] = lines.map((line) => {
       const key = `${line.salesInvoice.branchId}:${line.productId}`;
+      const qtyBoxes = Number(line.qtyBoxes);
+      const pieceOnly = line.product.baseUom === 'PIECE' || line.product.piecesPerBox === 1;
       return {
         salesInvoiceId: line.salesInvoice.id,
         invoiceNumber: line.salesInvoice.invoiceNumber,
@@ -119,9 +123,11 @@ export class PrismaDispatchReportRepository implements DispatchReportRepository 
         sku: line.product.sku,
         productName: line.product.name,
         sizeMm: line.product.sizeMm,
-        boxes: line.boxes,
-        pieces: line.pieces,
-        qtyBoxes: Number(line.qtyBoxes),
+        boxes: pieceOnly ? 0 : line.boxes,
+        pieces: pieceOnly
+          ? Math.round(qtyBoxes * Math.max(line.product.piecesPerBox, 1))
+          : line.pieces,
+        qtyBoxes,
         actualStockBoxes: round3(balanceByKey.get(key) ?? 0),
         stockUpdatedAt: updatedByKey.get(key) ?? null,
       };

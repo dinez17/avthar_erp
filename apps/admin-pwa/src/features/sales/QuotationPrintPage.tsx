@@ -3,7 +3,7 @@ import PrintIcon from '@mui/icons-material/Print';
 import { Alert, Box, Button, MenuItem, Stack, TextField } from '@mui/material';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { amountInWords } from '@tiles-erp/shared';
+import { amountInWords, formatBoxPieces } from '@tiles-erp/shared';
 import type { QuotationLineItem, QuotationPrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
 import { useQuotationPrint } from './api';
@@ -39,9 +39,20 @@ const date = (value: string): string => {
 
 /** Prints the quantity as it was entered: "10 box 2 pcs", or "12 pcs" for loose goods. */
 const quantity = (line: QuotationLineItem): string => {
-  if (line.boxes <= 0) return `${line.pieces} pcs`;
-  return line.pieces > 0 ? `${line.boxes} box ${line.pieces} pcs` : `${line.boxes} box`;
+  return formatBoxPieces(
+    line.qtyBoxes,
+    line.piecesPerBox,
+    line.baseUom === 'PIECE' || line.piecesPerBox === 1,
+  );
 };
+
+const printedBoxes = (line: QuotationLineItem): number =>
+  line.baseUom === 'PIECE' || line.piecesPerBox === 1 ? 0 : line.boxes;
+
+const printedPieces = (line: QuotationLineItem): number =>
+  line.baseUom === 'PIECE' || line.piecesPerBox === 1
+    ? Math.round(line.qtyBoxes * Math.max(line.piecesPerBox, 1))
+    : line.pieces;
 
 const totalWeightKg = (lines: QuotationLineItem[]): number =>
   lines.reduce(
@@ -215,8 +226,8 @@ function PrintBody({ data, isRoll }: { data: QuotationPrintData; isRoll: boolean
   const totalWeight = totalWeightKg(lines);
 
   if (!isRoll) {
-    const totalPieces = lines.reduce((sum, line) => sum + line.pieces, 0);
-    const totalBoxes = lines.reduce((sum, line) => sum + line.boxes, 0);
+    const totalPieces = lines.reduce((sum, line) => sum + printedPieces(line), 0);
+    const totalBoxes = lines.reduce((sum, line) => sum + printedBoxes(line), 0);
     const emptyRows = Array.from({ length: Math.max(0, 25 - lines.length) });
 
     return (
@@ -273,8 +284,8 @@ function PrintBody({ data, isRoll }: { data: QuotationPrintData; isRoll: boolean
                 <td style={{ textAlign: 'center' }}>{index + 1}</td>
                 <td style={{ textAlign: 'center' }}>{line.sizeMm || line.baseUom}</td>
                 <td>{line.productName}</td>
-                <td className="num">{line.boxes}</td>
-                <td className="num">{line.pieces}</td>
+                <td className="num">{printedBoxes(line)}</td>
+                <td className="num">{printedPieces(line)}</td>
                 <td className="num">{money(rateIncludingGst(line))}</td>
                 <td className="num">{money(line.lineTotal)}</td>
               </tr>

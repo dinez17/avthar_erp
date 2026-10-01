@@ -41,13 +41,8 @@ async function requestJson<T>(url: string, init: RequestInit): Promise<ApiRespon
   try {
     response = await fetch(url, init);
   } catch {
-    // A self-signed certificate is rejected for background requests until the browser
-    // has been shown the API origin directly, so call that out explicitly.
-    const needsCertTrust = env.apiUrl.startsWith('https://');
     throw new ApiError(
-      needsCertTrust
-        ? `Cannot reach the server at ${env.apiUrl}. If the API uses a self-signed certificate, open ${env.apiUrl}/docs in a tab and accept the warning once, then retry. Otherwise check that the API is running in HTTPS mode.`
-        : `Cannot reach the server at ${env.apiUrl}. Check that the API is running and reachable from this device.`,
+      `Cannot reach the server at ${env.apiUrl}. Check ${env.apiUrl}/health from this device, then retry.`,
       0,
       'NETWORK_UNREACHABLE',
     );

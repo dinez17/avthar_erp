@@ -190,11 +190,20 @@ export class SixOrbitCustomerPushService {
       }
       const sixorbitId = value(written.cuid) ?? cuid;
       if (!sixorbitId) throw new SixOrbitApiError('SixOrbit returned no customer id.', 'UNKNOWN');
+      // SixOrbit's create response normally contains only cuid. Search the customer once
+      // more so the same operation also captures the ledger and billing-address ids that
+      // sales-order creation requires; otherwise the first invoice push has to retry the
+      // customer sync before it can proceed.
+      const created = operation === 'create' ? await findExisting() : null;
+      const resolved = created ?? existing;
+      if (operation === 'create' && !resolved) {
+        throw new Error('Customer was created in SixOrbit, but its ledger and address details could not be read back. Retry the sync.');
+      }
       await this.prisma.customer.update({ where: { id: customerId }, data: {
-        sixorbitId, sixorbitAlid: value(written.alid ?? existing?.alid ?? customer.sixorbitAlid),
-        sixorbitCustomerNumber: value(existing?.customer_number ?? customer.sixorbitCustomerNumber), sixorbitCustomerCode: value(existing?.customer_code ?? customer.sixorbitCustomerCode),
+        sixorbitId, sixorbitAlid: value(written.alid ?? resolved?.alid ?? customer.sixorbitAlid),
+        sixorbitCustomerNumber: value(resolved?.customer_number ?? customer.sixorbitCustomerNumber), sixorbitCustomerCode: value(resolved?.customer_code ?? customer.sixorbitCustomerCode),
         sixorbitSyncStatus: 'SYNCED', sixorbitSyncedAt: new Date(),
-        sixorbitSyncError: null, sixorbitRaw: (address ?? existing ?? stored ?? written) as Prisma.InputJsonValue,
+        sixorbitSyncError: null, sixorbitRaw: (address ?? resolved ?? stored ?? written) as Prisma.InputJsonValue,
       }});
       return { customerId, operation, sixorbitId, adopted: Boolean(existing) };
     } catch (error) {

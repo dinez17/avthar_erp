@@ -260,10 +260,12 @@ export function SalesInvoicePrintPage(): JSX.Element {
           width: 100%;
           break-inside: avoid;
           page-break-inside: avoid;
+          break-after: page;
+          page-break-after: always;
         }
-        .inv-sheet .godown-slip + .godown-slip {
-          break-before: page;
-          page-break-before: always;
+        .inv-sheet .godown-slip:last-child {
+          break-after: auto;
+          page-break-after: auto;
         }
         .inv-sheet .delivery-slip {
           font-family: "Arial Black", Arial, Helvetica, sans-serif;

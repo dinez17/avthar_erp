@@ -37,10 +37,21 @@ export const apiBaseUrl = env.apiUrl;
  * preflight fails, which otherwise surfaces as an opaque "Failed to fetch".
  */
 async function requestJson<T>(url: string, init: RequestInit): Promise<ApiResponse<T>> {
-  let response: Response;
-  try {
-    response = await fetch(url, init);
-  } catch {
+  let response: Response | undefined;
+  const method = (init.method ?? 'GET').toUpperCase();
+  const retryDelays = method === 'GET' ? [0, 500, 1_000, 2_000, 4_000] : [0];
+  for (const delay of retryDelays) {
+    if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));
+    try {
+      response = await fetch(url, init);
+      break;
+    } catch {
+      // A production container replacement normally lasts only a few seconds. GETs are
+      // safe to retry; writes are deliberately attempted once because their outcome can
+      // be unknown if the connection drops after the server receives the request.
+    }
+  }
+  if (!response) {
     throw new ApiError(
       `Cannot reach the server at ${env.apiUrl}. Check ${env.apiUrl}/health from this device, then retry.`,
       0,

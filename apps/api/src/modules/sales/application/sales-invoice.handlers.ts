@@ -599,6 +599,11 @@ export class PostSalesInvoiceHandler
       throw new ValidationError(`Only draft invoices can be posted (this one is ${invoice.status})`);
     }
 
+    await this.invoices.assertGodownsInBranch(
+      invoice.branchId,
+      (invoice.lines ?? []).map((line) => line.godownId),
+    );
+
     // Credit control again at posting: the outstanding may have moved since the order.
     const parties = await this.invoices.billingParties(invoice.customerId, invoice.branchId);
     if (!command.canOverrideCredit && parties.creditLimit > 0) {

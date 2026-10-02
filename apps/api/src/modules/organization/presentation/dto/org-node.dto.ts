@@ -99,6 +99,11 @@ export class CreateOrgNodeDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ default: true, description: 'Godowns only: permit sales allocation and billing' })
+  @IsBoolean()
+  @IsOptional()
+  allowBilling?: boolean;
 }
 
 export class UpdateOrgNodeDto {
@@ -177,6 +182,11 @@ export class UpdateOrgNodeDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Godowns only: permit sales allocation and billing' })
+  @IsBoolean()
+  @IsOptional()
+  allowBilling?: boolean;
 
   @ApiProperty({ description: 'Optimistic concurrency token last read by the client' })
   @Type(() => Number)

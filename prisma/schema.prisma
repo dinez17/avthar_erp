@@ -203,6 +203,8 @@ model Godown {
   name     String
   code     String
   isActive Boolean @default(true)
+  /// False for showroom/display locations whose stock must not be offered for sale.
+  allowBilling Boolean @default(true)
 
   branch          Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
   gates           Gate[]

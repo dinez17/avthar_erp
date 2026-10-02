@@ -91,6 +91,7 @@ abstract class BaseCreateHandler implements ICommandHandler<CreateOrgNodeCommand
       email: data.email?.trim().toLowerCase() ?? null,
       parentId: data.parentId ?? null,
       isActive: data.isActive ?? true,
+      allowBilling: data.allowBilling ?? true,
       createdBy: command.actorId,
     });
   }
@@ -127,6 +128,7 @@ abstract class BaseUpdateHandler implements ICommandHandler<UpdateOrgNodeCommand
       phone: normalize(data.phone),
       email: data.email === null ? null : data.email?.trim().toLowerCase(),
       isActive: data.isActive,
+      allowBilling: data.allowBilling,
       updatedBy: command.actorId,
       version: data.version,
     });

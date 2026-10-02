@@ -51,7 +51,10 @@ export class StockController {
   async smartCheck(@Query() query: SmartStockCheckQueryDto) {
     const balances = await this.prisma.stockBalance.groupBy({
       by: ['productId'],
-      where: { branchId: query.branchId, godown: { deletedAt: null, isActive: true } },
+      where: {
+        branchId: query.branchId,
+        godown: { deletedAt: null, isActive: true, allowBilling: true },
+      },
       _sum: { qtyBoxes: true },
     });
     const productIds = balances.map((row) => row.productId);
@@ -137,7 +140,11 @@ export class StockController {
     const [product, balance] = await Promise.all([
       this.prisma.product.findFirst({ where: { id: dto.productId, deletedAt: null }, select: { id: true } }),
       this.prisma.stockBalance.aggregate({
-        where: { productId: dto.productId, branchId: dto.branchId, godown: { deletedAt: null, isActive: true } },
+        where: {
+          productId: dto.productId,
+          branchId: dto.branchId,
+          godown: { deletedAt: null, isActive: true, allowBilling: true },
+        },
         _sum: { qtyBoxes: true },
       }),
     ]);

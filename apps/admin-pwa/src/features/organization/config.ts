@@ -50,7 +50,7 @@ export const ORG_ENTITIES: Record<string, OrgEntityConfig> = {
     key: 'godowns',
     endpoint: '/godowns',
     title: 'Godowns',
-    subtitle: 'Warehouses within a branch.',
+    subtitle: 'Warehouses within a branch. Display stock can be excluded from sales billing.',
     singular: 'godown',
     parent: { endpoint: '/branches', label: 'Branch' },
     hasCode: true,

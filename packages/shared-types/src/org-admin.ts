@@ -20,6 +20,8 @@ export interface OrgNodeItem {
   phone: string | null;
   email: string | null;
   isActive: boolean;
+  /** Godowns only: whether stock in this location may be allocated and invoiced. */
+  allowBilling?: boolean;
   parentId: UUID | null;
   parentName: string | null;
   /** Number of direct children (branches for a company, godowns for a branch, ...). */
@@ -43,6 +45,7 @@ export interface CreateOrgNodeInput {
   email?: string;
   parentId?: UUID;
   isActive?: boolean;
+  allowBilling?: boolean;
 }
 
 /** Write model accepted by every org-node update endpoint. */
@@ -60,6 +63,7 @@ export interface UpdateOrgNodeInput {
   phone?: string | null;
   email?: string | null;
   isActive?: boolean;
+  allowBilling?: boolean;
   version: number;
 }
 

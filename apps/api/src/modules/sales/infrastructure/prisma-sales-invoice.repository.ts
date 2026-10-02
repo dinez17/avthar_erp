@@ -509,8 +509,27 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     if (godownIds.length === 0) return;
     const godowns = await this.prisma.godown.findMany({
       where: { id: { in: [...new Set(godownIds)] } },
-      select: { id: true, name: true, branchId: true, branch: { select: { name: true } } },
+      select: {
+        id: true, name: true, branchId: true, isActive: true, allowBilling: true, deletedAt: true,
+        branch: { select: { name: true } },
+      },
     });
+
+    const requestedIds = [...new Set(godownIds)];
+    const foundIds = new Set(godowns.map((godown) => godown.id));
+    if (requestedIds.some((id) => !foundIds.has(id))) {
+      throw new ValidationError('One or more selected godowns no longer exist. Select the stock location again.');
+    }
+
+    const blocked = godowns.filter(
+      (godown) => godown.deletedAt || !godown.isActive || !godown.allowBilling,
+    );
+    if (blocked.length > 0) {
+      throw new ValidationError(
+        `${blocked.map((godown) => godown.name).join(', ')} cannot be used for billing. ` +
+          'Transfer the stock to an active sales godown first.',
+      );
+    }
 
     const missing = godowns.filter((godown) => godown.branchId !== branchId);
     if (missing.length === 0) return;

@@ -29,6 +29,7 @@ export interface CreateOrgNodeData extends OrgContactData {
   gstin: string | null;
   parentId: UUID | null;
   isActive: boolean;
+  allowBilling?: boolean;
   createdBy: UUID;
 }
 
@@ -46,6 +47,7 @@ export interface UpdateOrgNodeData {
   phone?: string | null;
   email?: string | null;
   isActive?: boolean;
+  allowBilling?: boolean;
   updatedBy: UUID;
   version: number;
 }

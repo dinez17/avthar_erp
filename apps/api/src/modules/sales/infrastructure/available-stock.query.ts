@@ -38,7 +38,7 @@ export async function queryAvailableStock(
         branchId: { in: branchIds },
         productId: { in: productIds },
         qtyBoxes: { gt: 0 },
-        godown: { deletedAt: null, isActive: true },
+        godown: { deletedAt: null, isActive: true, allowBilling: true },
       },
       _sum: { qtyBoxes: true },
       orderBy: [{ branchId: 'asc' }, { godownId: 'asc' }, { batchNo: 'asc' }],
@@ -49,7 +49,7 @@ export async function queryAvailableStock(
       _sum: { qtyBoxes: true },
     }),
     prisma.godown.findMany({
-      where: { branchId: { in: branchIds }, deletedAt: null },
+      where: { branchId: { in: branchIds }, deletedAt: null, isActive: true, allowBilling: true },
       select: { id: true, name: true },
     }),
     prisma.branch.findMany({

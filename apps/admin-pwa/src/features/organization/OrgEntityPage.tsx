@@ -54,6 +54,7 @@ interface OrgFormValues {
   email: string;
   parentId: string;
   isActive: boolean;
+  allowBilling: boolean;
 }
 
 const emptyValues: OrgFormValues = {
@@ -70,6 +71,7 @@ const emptyValues: OrgFormValues = {
   email: '',
   parentId: '',
   isActive: true,
+  allowBilling: true,
 };
 
 function buildSchema(config: OrgEntityConfig): z.ZodType<OrgFormValues> {
@@ -107,6 +109,7 @@ function buildSchema(config: OrgEntityConfig): z.ZodType<OrgFormValues> {
         .refine((v) => v === '' || z.string().email().safeParse(v).success, 'Invalid email'),
       parentId: z.string(),
       isActive: z.boolean(),
+      allowBilling: z.boolean(),
     })
     .superRefine((values, ctx) => {
       if (config.hasCode && values.code === '') {
@@ -175,6 +178,7 @@ export function OrgEntityPage({ config }: { config: OrgEntityConfig }): JSX.Elem
       email: node.email ?? '',
       parentId: node.parentId ?? '',
       isActive: node.isActive,
+      allowBilling: node.allowBilling ?? true,
     });
     setDialogOpen(true);
   };
@@ -201,6 +205,7 @@ export function OrgEntityPage({ config }: { config: OrgEntityConfig }): JSX.Elem
               }
             : {}),
           isActive: values.isActive,
+          ...(config.key === 'godowns' ? { allowBilling: values.allowBilling } : {}),
           version: editing.version,
         });
       } else {
@@ -222,6 +227,7 @@ export function OrgEntityPage({ config }: { config: OrgEntityConfig }): JSX.Elem
             : {}),
           ...(config.parent ? { parentId: values.parentId } : {}),
           isActive: values.isActive,
+          ...(config.key === 'godowns' ? { allowBilling: values.allowBilling } : {}),
         });
       }
       setDialogOpen(false);
@@ -235,6 +241,20 @@ export function OrgEntityPage({ config }: { config: OrgEntityConfig }): JSX.Elem
     if (config.hasCode) cols.push({ field: 'code', headerName: 'Code', maxWidth: 140 });
     if (config.parent) {
       cols.push({ field: 'parentName', headerName: config.parent.label, minWidth: 160 });
+    }
+    if (config.key === 'godowns') {
+      cols.push({
+        field: 'allowBilling',
+        headerName: 'Sales billing',
+        maxWidth: 145,
+        cellRenderer: (p: ICellRendererParams<OrgNodeItem>) => (
+          <Chip
+            label={p.data?.allowBilling === false ? 'Excluded' : 'Allowed'}
+            color={p.data?.allowBilling === false ? 'warning' : 'success'}
+            size="small"
+          />
+        ),
+      });
     }
     if (config.hasGstin) cols.push({ field: 'gstin', headerName: 'GSTIN', minWidth: 180 });
     if (config.hasContact) {
@@ -443,6 +463,26 @@ export function OrgEntityPage({ config }: { config: OrgEntityConfig }): JSX.Elem
                     />
                   </Stack>
                 </>
+              )}
+              {config.key === 'godowns' && (
+                <Controller
+                  control={form.control}
+                  name="allowBilling"
+                  render={({ field }) => (
+                    <Stack spacing={0.5}>
+                      <FormControlLabel
+                        control={<Switch checked={field.value} onChange={field.onChange} />}
+                        label="Allow sales billing"
+                      />
+                      {!field.value && (
+                        <Alert severity="info">
+                          Stock remains physical and transferable, but it is excluded from quotations,
+                          sales orders and sales invoices.
+                        </Alert>
+                      )}
+                    </Stack>
+                  )}
+                />
               )}
               <Controller
                 control={form.control}

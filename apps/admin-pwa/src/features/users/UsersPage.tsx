@@ -28,6 +28,7 @@ import { DataTable } from '../../components/DataTable';
 import { ApiError } from '../../lib/api-client';
 import { useBranches } from '../products/branch-prices-api';
 import { useRoles } from '../roles/api';
+import { useOrgOptions } from '../organization/api';
 import { useCreateUser, useDeleteUser, useUpdateUser, useUsers } from './api';
 
 const userFormSchema = z.object({
@@ -43,6 +44,7 @@ const userFormSchema = z.object({
   lastName: z.string().trim().min(1, 'Required'),
   isActive: z.boolean(),
   branchIds: z.array(z.string().uuid()),
+  godownIds: z.array(z.string().uuid()),
   roleIds: z.array(z.string().uuid()).min(1, 'Assign at least one role'),
 });
 
@@ -56,6 +58,7 @@ const emptyValues: UserFormValues = {
   isActive: true,
   roleIds: [],
   branchIds: [],
+  godownIds: [],
 };
 
 export function UsersPage(): JSX.Element {
@@ -63,6 +66,7 @@ export function UsersPage(): JSX.Element {
   const { data, isFetching } = useUsers(pagination.query);
   const rolesQuery = useRoles({ page: 1, pageSize: 100, sortOrder: 'asc' });
   const branchesQuery = useBranches();
+  const godownsQuery = useOrgOptions('/godowns');
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
@@ -95,6 +99,7 @@ export function UsersPage(): JSX.Element {
       isActive: user.isActive,
       roleIds: user.roles.map((r) => r.id),
       branchIds: user.branches.map((b) => b.id),
+      godownIds: user.godowns.map((g) => g.id),
     });
     setDialogOpen(true);
   };
@@ -110,6 +115,7 @@ export function UsersPage(): JSX.Element {
           isActive: values.isActive,
           roleIds: values.roleIds,
           branchIds: values.branchIds,
+          godownIds: values.godownIds,
           ...(values.password ? { password: values.password } : {}),
           version: editing.version,
         });
@@ -126,6 +132,7 @@ export function UsersPage(): JSX.Element {
           isActive: values.isActive,
           roleIds: values.roleIds,
           branchIds: values.branchIds,
+          godownIds: values.godownIds,
           departmentIds: [],
         });
       }
@@ -193,6 +200,16 @@ export function UsersPage(): JSX.Element {
 
   // Ctrl+S saves without reaching for the mouse.
   useSaveShortcut(() => void onSubmit(), dialogOpen);
+
+  const selectedRoleIds = form.watch('roleIds');
+  const selectedBranchIds = form.watch('branchIds');
+  const isGodownStaff = (rolesQuery.data?.items ?? []).some(
+    (role) => selectedRoleIds.includes(role.id) &&
+      (role.name === 'GODOWN STAFF' || role.name === 'DELIVERY SLIP PRINT'),
+  );
+  const availableGodowns = (godownsQuery.data ?? []).filter(
+    (godown) => godown.parentId && selectedBranchIds.includes(godown.parentId),
+  );
 
   return (
     <PageContainer
@@ -296,6 +313,32 @@ export function UsersPage(): JSX.Element {
                   </TextField>
                 )}
               />
+              {isGodownStaff && (
+                <Controller
+                  control={form.control}
+                  name="godownIds"
+                  render={({ field, fieldState }) => (
+                    <TextField
+                      select
+                      label="Godowns *"
+                      slotProps={{ select: { multiple: true } }}
+                      value={field.value.filter((id) => availableGodowns.some((g) => g.id === id))}
+                      onChange={field.onChange}
+                      disabled={godownsQuery.isPending || selectedBranchIds.length === 0}
+                      error={Boolean(fieldState.error) || godownsQuery.isError}
+                      helperText={fieldState.error?.message || (selectedBranchIds.length === 0
+                        ? 'Select a branch first.'
+                        : 'Select the godowns whose delivery slips this user may print.')}
+                    >
+                      {availableGodowns.map((godown) => (
+                        <MenuItem key={godown.id} value={godown.id}>
+                          {godown.parentName} · {godown.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                />
+              )}
               <Controller
                 control={form.control}
                 name="isActive"

@@ -27,6 +27,7 @@ export class CreateUserHandler implements ICommandHandler<CreateUserCommand, Use
       isActive: command.data.isActive,
       roleIds: command.data.roleIds,
       branchIds: command.data.branchIds,
+      godownIds: command.data.godownIds,
       departmentIds: command.data.departmentIds,
       createdBy: command.actorId,
     });

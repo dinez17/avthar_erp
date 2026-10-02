@@ -55,12 +55,13 @@ export class GetSalesInvoiceQuery {
 }
 
 export class SalesInvoicePrintQuery {
-  constructor(public readonly id: UUID) {}
+  constructor(public readonly id: UUID, public readonly godownId?: UUID) {}
 }
 
 export class PrintDeliverySlipCommand {
   constructor(
     public readonly id: UUID,
+    public readonly godownId: UUID,
     public readonly actorId: UUID,
   ) {}
 }
@@ -662,7 +663,7 @@ export class SalesInvoicePrintHandler
   constructor(@Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository) {}
 
   async execute(query: SalesInvoicePrintQuery): Promise<SalesInvoicePrintData> {
-    const data = await this.invoices.printData(query.id);
+    const data = await this.invoices.printData(query.id, query.godownId);
     if (!data) throw new NotFoundError('Sales invoice not found');
     if (data.invoice.status !== 'POSTED') {
       throw new ValidationError('Post the sales invoice before printing it.');
@@ -678,9 +679,9 @@ export class PrintDeliverySlipHandler
   constructor(@Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository) {}
 
   async execute(command: PrintDeliverySlipCommand): Promise<SalesInvoicePrintData> {
-    await this.invoices.claimDeliverySlipPrint(command.id, command.actorId);
-    const data = await this.invoices.printData(command.id);
+    const data = await this.invoices.printData(command.id, command.godownId);
     if (!data) throw new NotFoundError('Sales invoice not found');
+    await this.invoices.claimDeliverySlipPrint(command.id, command.godownId, command.actorId);
     return data;
   }
 }

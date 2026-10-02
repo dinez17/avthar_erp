@@ -84,10 +84,18 @@ const canOverrideCredit = (user: AuthenticatedUser): boolean =>
 
 interface DeliverySlipListItem {
   id: string;
+  invoiceId: string;
+  godownId: string;
+  godownName: string;
   invoiceNumber: string;
   invoiceDate: string;
   customerName: string;
   branchName: string;
+  customerMobile: string | null;
+  salesmanName: string | null;
+  itemCount: number;
+  totalBoxes: number;
+  totalPieces: number;
 }
 
 @ApiTags('Sales invoices')
@@ -101,9 +109,9 @@ export class SalesInvoiceController {
     @Inject(SALES_ORDER_REPOSITORY) private readonly orders: SalesOrderRepository,
   ) {}
 
-  private mayAccessBranch(user: AuthenticatedUser, branchId: string): boolean {
-    return user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN') ||
-      user.branchIds.includes(branchId);
+  private async mayAccessGodown(user: AuthenticatedUser, godownId: string): Promise<boolean> {
+    if (user.roles.includes('SUPER_ADMIN')) return true;
+    return (await this.invoices.assignedGodownIds(user.id)).has(godownId);
   }
 
   @Post('transfer-and-invoice/:salesOrderId')
@@ -226,25 +234,52 @@ export class SalesInvoiceController {
   ): Promise<Paginated<DeliverySlipListItem>> {
     const result = await this.queryBus.execute<ListSalesInvoicesQuery, Paginated<SalesInvoiceItem>>(
       new ListSalesInvoicesQuery(query, {
-        branchIds: user.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN')
-          ? undefined
-          : user.branchIds,
+        // Supplying godowns can belong to a different branch from the invoice.
+        // Access is narrowed to the user's assigned godowns below.
+        branchIds: undefined,
         status: 'POSTED',
         fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
         toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
       }),
     );
-    const printedIds = await this.invoices.printedDeliverySlipIds(result.items.map((invoice) => invoice.id));
-    const available = result.items.filter((invoice) => !printedIds.has(invoice.id));
+    const [printedKeys, assignedGodowns, printRows] = await Promise.all([
+      this.invoices.printedDeliverySlipKeys(result.items.map((invoice) => invoice.id)),
+      user.roles.includes('SUPER_ADMIN')
+        ? Promise.resolve<Set<string> | null>(null)
+        : this.invoices.assignedGodownIds(user.id),
+      Promise.all(result.items.map((invoice) => this.invoices.printData(invoice.id))),
+    ]);
+    const available = result.items.flatMap((invoice, index) => {
+      const lines = printRows[index]?.deliveryLines ?? [];
+      const byGodown = new Map<string, typeof lines>();
+      for (const line of lines) {
+        const rows = byGodown.get(line.godownId) ?? [];
+        rows.push(line);
+        byGodown.set(line.godownId, rows);
+      }
+      return [...byGodown.entries()].flatMap(([godownId, godownLines]) => {
+        if (assignedGodowns && !assignedGodowns.has(godownId)) return [];
+        if (printedKeys.has(`${invoice.id}|*`) || printedKeys.has(`${invoice.id}|${godownId}`)) return [];
+        return [{
+          id: `${invoice.id}:${godownId}`,
+          invoiceId: invoice.id,
+          godownId,
+          godownName: godownLines[0]?.godownName ?? 'Unknown godown',
+          invoiceNumber: invoice.invoiceNumber,
+          invoiceDate: invoice.invoiceDate,
+          customerName: invoice.customerName,
+          customerMobile: invoice.customerMobile,
+          salesmanName: invoice.salesmanName,
+          branchName: invoice.branchName,
+          itemCount: godownLines.length,
+          totalBoxes: godownLines.reduce((sum, line) => sum + line.boxes, 0),
+          totalPieces: godownLines.reduce((sum, line) => sum + line.pieces, 0),
+        }];
+      });
+    });
     return {
       meta: result.meta,
-      items: available.map((invoice) => ({
-        id: invoice.id,
-        invoiceNumber: invoice.invoiceNumber,
-        invoiceDate: invoice.invoiceDate,
-        customerName: invoice.customerName,
-        branchName: invoice.branchName,
-      })),
+      items: available,
     };
   }
 
@@ -306,13 +341,14 @@ export class SalesInvoiceController {
   @ApiOperation({ summary: 'Preview a delivery slip without consuming its single print' })
   async previewDeliverySlip(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('godownId', ParseUUIDPipe) godownId: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
     const data = await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
-      new SalesInvoicePrintQuery(id),
+      new SalesInvoicePrintQuery(id, godownId),
     );
-    if (!this.mayAccessBranch(user, data.invoice.branchId)) throw new NotFoundError('Sales invoice not found');
-    if (await this.invoices.deliverySlipPrinted(id)) {
+    if (!(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
+    if (await this.invoices.deliverySlipPrinted(id, godownId)) {
       throw new ValidationError('The delivery slip has already been printed. Only one print is allowed.');
     }
     return data;
@@ -323,13 +359,14 @@ export class SalesInvoiceController {
   @ApiOperation({ summary: 'Issue a delivery slip; every user is limited to one copy' })
   async printDeliverySlip(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('godownId', ParseUUIDPipe) godownId: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
-    const preview = await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
-      new SalesInvoicePrintQuery(id),
+    await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
+      new SalesInvoicePrintQuery(id, godownId),
     );
-    if (!this.mayAccessBranch(user, preview.invoice.branchId)) throw new NotFoundError('Sales invoice not found');
-    return this.commandBus.execute(new PrintDeliverySlipCommand(id, user.id));
+    if (!(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
+    return this.commandBus.execute(new PrintDeliverySlipCommand(id, godownId, user.id));
   }
 
   @Get(':id')

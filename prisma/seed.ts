@@ -52,7 +52,7 @@ async function seedRoles(): Promise<void> {
     where: { code: PERMISSIONS.DELIVERY_SLIP_PRINT },
   });
   if (deliveryPermission) {
-    const dedicatedRole = await prisma.role.findUnique({ where: { name: 'DELIVERY SLIP PRINT' } });
+    const dedicatedRole = await prisma.role.findUnique({ where: { name: 'GODOWN STAFF' } });
     await prisma.rolePermission.deleteMany({
       where: {
         permissionId: deliveryPermission.id,

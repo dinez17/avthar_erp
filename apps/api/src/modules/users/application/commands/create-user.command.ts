@@ -10,6 +10,7 @@ export class CreateUserCommand {
       isActive: boolean;
       roleIds: UUID[];
       branchIds: UUID[];
+      godownIds: UUID[];
       departmentIds: UUID[];
     },
     public readonly actorId: UUID,

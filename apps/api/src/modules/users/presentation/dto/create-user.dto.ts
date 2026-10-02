@@ -57,5 +57,11 @@ export class CreateUserDto {
   @IsArray()
   @IsUUID('4', { each: true })
   @IsOptional()
+  godownIds: string[] = [];
+
+  @ApiPropertyOptional({ type: [String], format: 'uuid', default: [] })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
   departmentIds: string[] = [];
 }

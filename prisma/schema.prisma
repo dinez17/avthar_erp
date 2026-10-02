@@ -39,6 +39,7 @@ model User {
 
   roles          UserRole[]
   branches       UserBranch[]
+  godowns        UserGodown[]
   departments    UserDepartment[]
   /// Portal logins linking this user to a supplier or customer they may act for
   portalAccounts PortalAccount[]
@@ -215,6 +216,8 @@ model Godown {
   purchaseInvoices PurchaseInvoice[]
   purchaseReturns PurchaseReturn[]
   gatePassLines   GatePassLine[]
+  users           UserGodown[]
+  deliverySlipPrints DeliverySlipPrint[]
 
   createdAt DateTime  @default(now())
   createdBy String?   @db.Uuid
@@ -298,6 +301,19 @@ model UserBranch {
 
   @@id([userId, branchId])
   @@map("user_branches")
+}
+
+/// Godown access is only assigned to users who prepare godown delivery slips.
+model UserGodown {
+  userId   String @db.Uuid
+  godownId String @db.Uuid
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  godown Godown @relation(fields: [godownId], references: [id], onDelete: Cascade)
+
+  @@id([userId, godownId])
+  @@index([godownId])
+  @@map("user_godowns")
 }
 
 model UserDepartment {
@@ -1698,6 +1714,7 @@ model SalesInvoice {
   allocations CustomerReceiptAllocation[]
   gatePasses  GatePassDocument[]
   returns     SalesReturn[]
+  deliverySlipPrints DeliverySlipPrint[]
 
   createdAt DateTime  @default(now())
   createdBy String?   @db.Uuid
@@ -1712,6 +1729,22 @@ model SalesInvoice {
   @@index([status])
   @@index([invoiceDate])
   @@map("sales_invoices")
+}
+
+/// Permanent one-copy lock for a godown's portion of an invoice delivery slip.
+model DeliverySlipPrint {
+  id             String   @id @default(uuid()) @db.Uuid
+  salesInvoiceId String   @db.Uuid
+  godownId       String   @db.Uuid
+  printedBy      String   @db.Uuid
+  printedAt      DateTime @default(now())
+
+  salesInvoice SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Restrict)
+  godown       Godown       @relation(fields: [godownId], references: [id], onDelete: Restrict)
+
+  @@unique([salesInvoiceId, godownId])
+  @@index([printedBy])
+  @@map("delivery_slip_prints")
 }
 
 model SalesInvoiceLine {

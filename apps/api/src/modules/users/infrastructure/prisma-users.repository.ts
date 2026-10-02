@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { buildPaginated, ConflictError, NotFoundError } from '@tiles-erp/shared';
+import { buildPaginated, ConflictError, NotFoundError, ValidationError } from '@tiles-erp/shared';
 import type {
   Paginated,
   PaginationQuery,
@@ -14,6 +14,7 @@ import type { CreateUserData, UpdateUserData, UsersRepository } from '../domain/
 const include = {
   roles: { include: { role: { select: { id: true, name: true } } } },
   branches: { include: { branch: { select: { id: true, name: true } } } },
+  godowns: { include: { godown: { select: { id: true, name: true, branchId: true, branch: { select: { name: true } } } } } },
   departments: { include: { department: { select: { id: true, name: true } } } },
 } satisfies Prisma.UserInclude;
 
@@ -27,6 +28,12 @@ const toItem = (u: Row): UserListItem => ({
   isActive: u.isActive,
   roles: u.roles.map((r) => ({ id: r.role.id, name: r.role.name })),
   branches: u.branches.map((b) => ({ id: b.branch.id, name: b.branch.name })),
+  godowns: u.godowns.map((g) => ({
+    id: g.godown.id,
+    name: g.godown.name,
+    branchId: g.godown.branchId,
+    branchName: g.godown.branch.name,
+  })),
   departments: u.departments.map((d) => ({ id: d.department.id, name: d.department.name })),
   createdAt: u.createdAt.toISOString(),
   version: u.version,
@@ -35,6 +42,28 @@ const toItem = (u: Row): UserListItem => ({
 @Injectable()
 export class PrismaUsersRepository implements UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async validGodownIds(
+    db: Pick<PrismaService, 'role' | 'godown'>,
+    roleIds: UUID[],
+    branchIds: UUID[],
+    godownIds: UUID[],
+  ): Promise<UUID[]> {
+    const godownStaff = await db.role.count({
+      where: { id: { in: roleIds }, name: { in: ['GODOWN STAFF', 'DELIVERY SLIP PRINT'] }, deletedAt: null },
+    });
+    if (!godownStaff) return [];
+    if (godownIds.length === 0) throw new ValidationError('Assign at least one godown to godown staff');
+    const unique = [...new Set(godownIds)];
+    const valid = await db.godown.findMany({
+      where: { id: { in: unique }, branchId: { in: branchIds }, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    if (valid.length !== unique.length) {
+      throw new ValidationError('Every assigned godown must be active and belong to an assigned branch');
+    }
+    return unique;
+  }
 
   async list(query: PaginationQuery): Promise<Paginated<UserListItem>> {
     const where: Prisma.UserWhereInput = {
@@ -111,6 +140,9 @@ export class PrismaUsersRepository implements UsersRepository {
   }
 
   async create(data: CreateUserData): Promise<UserListItem> {
+    const godownIds = await this.validGodownIds(
+      this.prisma, data.roleIds, data.branchIds, data.godownIds,
+    );
     const row = await this.prisma.user.create({
       data: {
         email: data.email,
@@ -121,6 +153,7 @@ export class PrismaUsersRepository implements UsersRepository {
         createdBy: data.createdBy,
         roles: { create: data.roleIds.map((roleId) => ({ roleId })) },
         branches: { create: data.branchIds.map((branchId) => ({ branchId })) },
+        godowns: { create: godownIds.map((godownId) => ({ godownId })) },
         departments: { create: data.departmentIds.map((departmentId) => ({ departmentId })) },
       },
       include,
@@ -130,6 +163,19 @@ export class PrismaUsersRepository implements UsersRepository {
 
   async update(id: UUID, data: UpdateUserData): Promise<UserListItem> {
     const row = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findFirst({
+        where: { id, deletedAt: null },
+        select: {
+          roles: { select: { roleId: true } },
+          branches: { select: { branchId: true } },
+          godowns: { select: { godownId: true } },
+        },
+      });
+      if (!existing) throw new NotFoundError('User not found');
+      const roleIds = data.roleIds ?? existing.roles.map((role) => role.roleId);
+      const branchIds = data.branchIds ?? existing.branches.map((branch) => branch.branchId);
+      const requestedGodownIds = data.godownIds ?? existing.godowns.map((godown) => godown.godownId);
+      const godownIds = await this.validGodownIds(tx as unknown as PrismaService, roleIds, branchIds, requestedGodownIds);
       const updated = await tx.user.updateMany({
         where: { id, deletedAt: null, version: data.version },
         data: {
@@ -154,6 +200,12 @@ export class PrismaUsersRepository implements UsersRepository {
         await tx.userBranch.deleteMany({ where: { userId: id } });
         await tx.userBranch.createMany({
           data: data.branchIds.map((branchId) => ({ userId: id, branchId })),
+        });
+      }
+      if (data.godownIds || data.roleIds || data.branchIds) {
+        await tx.userGodown.deleteMany({ where: { userId: id } });
+        await tx.userGodown.createMany({
+          data: godownIds.map((godownId) => ({ userId: id, godownId })),
         });
       }
       if (data.departmentIds) {

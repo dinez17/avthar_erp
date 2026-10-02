@@ -1569,7 +1569,7 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     });
   }
 
-  async printData(id: UUID): Promise<SalesInvoicePrintData | null> {
+  async printData(id: UUID, godownId?: UUID): Promise<SalesInvoicePrintData | null> {
     const row = await this.prisma.salesInvoice.findFirst({
       where: { id, deletedAt: null },
       include: { ...include, branch: { include: { company: true } } },
@@ -1587,7 +1587,13 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       true,
       await this.godownNames(row as unknown as Row),
     );
-    const deliveryLines = await this.deliverySlipLines(row as unknown as Row, invoice.lines ?? []);
+    const allDeliveryLines = await this.deliverySlipLines(row as unknown as Row, invoice.lines ?? []);
+    const deliveryLines = godownId
+      ? allDeliveryLines.filter((line) => line.godownId === godownId)
+      : allDeliveryLines;
+    if (godownId && deliveryLines.length === 0) {
+      throw new NotFoundError('This invoice has no items for the selected godown');
+    }
 
     return {
       invoice,
@@ -1710,11 +1716,11 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     return result.length > 0 ? result : invoiceLines;
   }
 
-  async claimDeliverySlipPrint(id: UUID, actorId: UUID): Promise<void> {
+  async claimDeliverySlipPrint(id: UUID, godownId: UUID, actorId: UUID): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       // Serialise attempts for this invoice so two near-simultaneous requests cannot both
       // become the regular user's first copy.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`delivery-slip:${id}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`delivery-slip:${id}:${godownId}`}))`;
 
       const invoice = await tx.salesInvoice.findFirst({
         where: { id, deletedAt: null },
@@ -1725,13 +1731,21 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
         throw new ValidationError('Post the sales invoice before printing it.');
       }
 
-      const priorPrint = await tx.auditLog.findFirst({
+      const legacyPrint = await tx.auditLog.findFirst({
         where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
         select: { id: true },
       });
-      if (priorPrint) {
+      const priorPrint = await tx.deliverySlipPrint.findUnique({
+        where: { salesInvoiceId_godownId: { salesInvoiceId: id, godownId } },
+        select: { id: true },
+      });
+      if (legacyPrint || priorPrint) {
         throw new ValidationError('The delivery slip has already been printed.');
       }
+
+      await tx.deliverySlipPrint.create({
+        data: { salesInvoiceId: id, godownId, printedBy: actorId },
+      });
 
       await tx.auditLog.create({
         data: {
@@ -1739,28 +1753,43 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
           entityId: id,
           action: 'DELIVERY_SLIP_PRINTED',
           userId: actorId,
-          changes: { reprint: false },
+          changes: { reprint: false, godownId },
         },
       });
     });
   }
 
-  async deliverySlipPrinted(id: UUID): Promise<boolean> {
-    const print = await this.prisma.auditLog.findFirst({
+  async deliverySlipPrinted(id: UUID, godownId: UUID): Promise<boolean> {
+    const [legacyPrint, print] = await Promise.all([this.prisma.auditLog.findFirst({
       where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
       select: { id: true },
-    });
-    return Boolean(print);
+    }), this.prisma.deliverySlipPrint.findUnique({
+      where: { salesInvoiceId_godownId: { salesInvoiceId: id, godownId } },
+      select: { id: true },
+    })]);
+    return Boolean(legacyPrint || print);
   }
 
-  async printedDeliverySlipIds(ids: UUID[]): Promise<Set<UUID>> {
+  async printedDeliverySlipKeys(ids: UUID[]): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
-    const prints = await this.prisma.auditLog.findMany({
+    const [legacyPrints, prints] = await Promise.all([this.prisma.auditLog.findMany({
       where: { entity: 'SalesInvoice', entityId: { in: ids }, action: 'DELIVERY_SLIP_PRINTED' },
       select: { entityId: true },
       distinct: ['entityId'],
+    }), this.prisma.deliverySlipPrint.findMany({
+      where: { salesInvoiceId: { in: ids } },
+      select: { salesInvoiceId: true, godownId: true },
+    })]);
+    const keys = new Set(prints.map((print) => `${print.salesInvoiceId}|${print.godownId}`));
+    for (const legacy of legacyPrints) keys.add(`${legacy.entityId}|*`);
+    return keys;
+  }
+
+  async assignedGodownIds(userId: UUID): Promise<Set<UUID>> {
+    const rows = await this.prisma.userGodown.findMany({
+      where: { userId }, select: { godownId: true },
     });
-    return new Set(prints.map((print) => print.entityId));
+    return new Set(rows.map((row) => row.godownId));
   }
 
   async billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties> {

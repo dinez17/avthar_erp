@@ -10,6 +10,7 @@ export class UpdateUserCommand {
       password?: string;
       roleIds?: UUID[];
       branchIds?: UUID[];
+      godownIds?: UUID[];
       departmentIds?: UUID[];
       version: number;
     },

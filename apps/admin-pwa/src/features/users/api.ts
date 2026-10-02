@@ -22,6 +22,7 @@ export interface CreateUserInput {
   isActive: boolean;
   roleIds: string[];
   branchIds: string[];
+  godownIds: string[];
   departmentIds: string[];
 }
 

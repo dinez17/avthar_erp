@@ -9,6 +9,7 @@ export interface UserListItem {
   isActive: boolean;
   roles: { id: UUID; name: string }[];
   branches: { id: UUID; name: string }[];
+  godowns: { id: UUID; name: string; branchId: UUID; branchName: string }[];
   departments: { id: UUID; name: string }[];
   createdAt: ISODateString;
   version: number;

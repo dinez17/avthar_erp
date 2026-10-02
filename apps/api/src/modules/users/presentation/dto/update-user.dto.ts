@@ -59,6 +59,12 @@ export class UpdateUserDto {
   @IsArray()
   @IsUUID('4', { each: true })
   @IsOptional()
+  godownIds?: string[];
+
+  @ApiPropertyOptional({ type: [String], format: 'uuid' })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
   departmentIds?: string[];
 
   @ApiProperty({ description: 'Optimistic concurrency token last read by the client' })

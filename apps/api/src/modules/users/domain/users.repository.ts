@@ -16,6 +16,7 @@ export interface CreateUserData {
   isActive: boolean;
   roleIds: UUID[];
   branchIds: UUID[];
+  godownIds: UUID[];
   departmentIds: UUID[];
   createdBy: UUID;
 }
@@ -27,6 +28,7 @@ export interface UpdateUserData {
   passwordHash?: string;
   roleIds?: UUID[];
   branchIds?: UUID[];
+  godownIds?: UUID[];
   departmentIds?: UUID[];
   updatedBy: UUID;
   /** Optimistic concurrency token the client last saw. */

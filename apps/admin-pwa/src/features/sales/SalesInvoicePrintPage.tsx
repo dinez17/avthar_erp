@@ -74,10 +74,11 @@ export function SalesInvoicePrintPage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const requested = searchParams.get('paper');
   const requestedDocument = searchParams.get('document');
+  const deliveryGodownId = searchParams.get('godownId');
   const canPrintDeliverySlip = hasPermission(PERMISSIONS.DELIVERY_SLIP_PRINT);
   const deliveryOnlyUser = Boolean(
-    user?.roles.includes('DELIVERY SLIP PRINT') &&
-    !user.roles.some((role) => role !== 'DELIVERY SLIP PRINT'),
+    user?.roles.some((role) => role === 'GODOWN STAFF' || role === 'DELIVERY SLIP PRINT') &&
+    !user.roles.some((role) => role !== 'GODOWN STAFF' && role !== 'DELIVERY SLIP PRINT'),
   );
   const requestedType = isInvoiceDocument(requestedDocument) ? requestedDocument : 'tax';
   const initialDocument = deliveryOnlyUser ? 'delivery' : requestedType;
@@ -93,7 +94,10 @@ export function SalesInvoicePrintPage(): JSX.Element {
   const [documentType, setDocumentType] = useState<InvoiceDocument>(initialDocument);
   const [deliveryPrinted, setDeliveryPrinted] = useState(false);
   const invoicePrint = useSalesInvoicePrint(documentType === 'delivery' ? null : (id ?? null));
-  const deliveryPreview = useDeliverySlipPreview(documentType === 'delivery' ? (id ?? null) : null);
+  const deliveryPreview = useDeliverySlipPreview(
+    documentType === 'delivery' ? (id ?? null) : null,
+    documentType === 'delivery' ? deliveryGodownId : null,
+  );
   const claimDeliveryPrint = useClaimDeliverySlipPrint();
   const activePrint = documentType === 'delivery' ? deliveryPreview : invoicePrint;
   const { data, isLoading, isError, error } = activePrint;
@@ -194,12 +198,12 @@ export function SalesInvoicePrintPage(): JSX.Element {
               window.print();
               return;
             }
-            if (!id || deliveryPrinted || claimDeliveryPrint.isPending) return;
+            if (!id || !deliveryGodownId || deliveryPrinted || claimDeliveryPrint.isPending) return;
 
             // Lock this page immediately. The API claim provides the permanent lock, so
             // returning to the invoice cannot obtain another copy from cached page data.
             setDeliveryPrinted(true);
-            void claimDeliveryPrint.mutateAsync(id).then(() => {
+            void claimDeliveryPrint.mutateAsync({ id, godownId: deliveryGodownId }).then(() => {
               window.print();
             }).catch(() => {
               // Keep the button locked: an uncertain network response may still have

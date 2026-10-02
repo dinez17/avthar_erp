@@ -67,6 +67,54 @@ type Row = Prisma.SalesInvoiceGetPayload<{ include: typeof include }>;
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 const round3 = (value: number): number => Math.round(value * 1000) / 1000;
 
+/** Apply money received before billing to the invoice that has just been posted. */
+async function allocateCustomerAdvances(
+  tx: Prisma.TransactionClient,
+  invoice: { id: string; customerId: string; branchId: string; grandTotal: Prisma.Decimal; paidAmount: Prisma.Decimal },
+  updatedBy: string,
+): Promise<void> {
+  let outstanding = round2(Number(invoice.grandTotal) - Number(invoice.paidAmount));
+  if (outstanding <= 0.005) return;
+
+  const receipts = await tx.customerReceipt.findMany({
+    where: {
+      customerId: invoice.customerId,
+      branchId: invoice.branchId,
+      status: 'POSTED',
+      deletedAt: null,
+    },
+    select: { id: true, receiptNumber: true, amount: true, allocatedAmount: true },
+    orderBy: [{ receiptDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  for (const receipt of receipts) {
+    if (outstanding <= 0.005) break;
+    const available = round2(Number(receipt.amount) - Number(receipt.allocatedAmount));
+    if (available <= 0.005) continue;
+    const amount = round2(Math.min(available, outstanding));
+
+    // Compare the old allocated value while incrementing it. A simultaneous allocation
+    // then fails this transaction instead of spending the same advance twice.
+    const changed = await tx.customerReceipt.updateMany({
+      where: { id: receipt.id, status: 'POSTED', allocatedAmount: receipt.allocatedAmount },
+      data: { allocatedAmount: { increment: amount }, updatedBy },
+    });
+    if (changed.count !== 1) {
+      throw new ConflictError(
+        `${receipt.receiptNumber} was allocated by someone else. Reload and post again.`,
+      );
+    }
+    await tx.customerReceiptAllocation.create({
+      data: { receiptId: receipt.id, salesInvoiceId: invoice.id, amount },
+    });
+    await tx.salesInvoice.update({
+      where: { id: invoice.id },
+      data: { paidAmount: { increment: amount }, updatedBy },
+    });
+    outstanding = round2(outstanding - amount);
+  }
+}
+
 const toLine = (
   line: Row['lines'][number],
   godownNames: Map<string, string>,
@@ -1144,6 +1192,8 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
       if (updated.count === 0) {
         throw new ConflictError('Invoice was modified by someone else. Reload and retry.');
       }
+
+      await allocateCustomerAdvances(tx, invoice, postedBy);
 
       if (invoice.salesOrderId) {
         await rollUpOrderStatus(tx, invoice.salesOrderId, postedBy);

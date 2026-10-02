@@ -66,6 +66,9 @@ const PRINT_OPTIONS = [
   { document: 'items', paper: 'A4', label: 'Item list — A4' },
   { document: 'items', paper: 'A5', label: 'Item list — A5' },
   { document: 'proforma', paper: 'A4', label: 'Proforma invoice — A4' },
+  { document: 'delivery', paper: 'A4', label: 'Original delivery slip — A4' },
+  { document: 'delivery', paper: '80mm', label: 'Original delivery slip — 80 mm thermal' },
+  { document: 'delivery', paper: '58mm', label: 'Original delivery slip — 58 mm thermal' },
   { document: 'tax', paper: '80mm', label: 'Tax invoice — 80 mm roll' },
   { document: 'tax', paper: '58mm', label: 'Tax invoice — 58 mm roll' },
 ] as const;
@@ -97,6 +100,7 @@ export function SalesInvoicesPage(): JSX.Element {
   const branches = useBranches();
   const { user, hasPermission } = useAuth();
   const canSyncSixOrbit = hasPermission(PERMISSIONS.SIXORBIT_SYNC);
+  const canPrintOriginalDeliverySlip = Boolean(user?.roles.includes('DELIVERY SLIP PRINT'));
   const canChangeBranch = Boolean(user?.roles.some((role) => role === 'ADMIN' || role === 'SUPER_ADMIN'));
   const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [customerId, setCustomerId] = useState('');
@@ -460,7 +464,9 @@ export function SalesInvoicesPage(): JSX.Element {
         anchorEl={printMenu?.anchor ?? null}
         onClose={() => setPrintMenu(null)}
       >
-        {PRINT_OPTIONS.map((option) => (
+        {PRINT_OPTIONS.filter((option) =>
+          option.document !== 'delivery' || canPrintOriginalDeliverySlip,
+        ).map((option) => (
           <MenuItem
             key={`${option.document}-${option.paper}`}
             onClick={() => {

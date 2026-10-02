@@ -85,8 +85,9 @@ const canOverrideCredit = (user: AuthenticatedUser): boolean =>
 interface DeliverySlipListItem {
   id: string;
   invoiceId: string;
-  godownId: string;
-  godownName: string;
+  copyType: 'ORIGINAL' | 'GODOWN';
+  godownId: string | null;
+  godownName: string | null;
   invoiceNumber: string;
   invoiceDate: string;
   customerName: string;
@@ -232,25 +233,39 @@ export class SalesInvoiceController {
     @Query() query: SalesInvoiceListQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<Paginated<DeliverySlipListItem>> {
+    const godownMode = user.roles.includes('GODOWN STAFF');
     const result = await this.queryBus.execute<ListSalesInvoicesQuery, Paginated<SalesInvoiceItem>>(
       new ListSalesInvoicesQuery(query, {
         // Supplying godowns can belong to a different branch from the invoice.
         // Access is narrowed to the user's assigned godowns below.
-        branchIds: undefined,
+        branchIds: godownMode || user.roles.includes('SUPER_ADMIN') ? undefined : user.branchIds,
         status: 'POSTED',
         fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
         toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
       }),
     );
-    const [printedKeys, assignedGodowns, printRows] = await Promise.all([
-      this.invoices.printedDeliverySlipKeys(result.items.map((invoice) => invoice.id)),
-      user.roles.includes('SUPER_ADMIN')
-        ? Promise.resolve<Set<string> | null>(null)
-        : this.invoices.assignedGodownIds(user.id),
+    const invoiceIds = result.items.map((invoice) => invoice.id);
+    const [printedKeys, printedOriginalIds, assignedGodowns, printRows] = await Promise.all([
+      this.invoices.printedDeliverySlipKeys(invoiceIds),
+      this.invoices.printedOriginalDeliverySlipIds(invoiceIds),
+      godownMode ? this.invoices.assignedGodownIds(user.id) : Promise.resolve(new Set<string>()),
       Promise.all(result.items.map((invoice) => this.invoices.printData(invoice.id))),
     ]);
-    const available = result.items.flatMap((invoice, index) => {
+    const available = result.items.flatMap<DeliverySlipListItem>((invoice, index) => {
       const lines = printRows[index]?.deliveryLines ?? [];
+      if (!godownMode) {
+        if (printedOriginalIds.has(invoice.id)) return [];
+        return [{
+          id: `${invoice.id}:original`, invoiceId: invoice.id, copyType: 'ORIGINAL' as const,
+          godownId: null, godownName: null,
+          invoiceNumber: invoice.invoiceNumber, invoiceDate: invoice.invoiceDate,
+          customerName: invoice.customerName, customerMobile: invoice.customerMobile,
+          salesmanName: invoice.salesmanName, branchName: invoice.branchName,
+          itemCount: lines.length,
+          totalBoxes: lines.reduce((sum, line) => sum + line.boxes, 0),
+          totalPieces: lines.reduce((sum, line) => sum + line.pieces, 0),
+        }];
+      }
       const byGodown = new Map<string, typeof lines>();
       for (const line of lines) {
         const rows = byGodown.get(line.godownId) ?? [];
@@ -258,11 +273,12 @@ export class SalesInvoiceController {
         byGodown.set(line.godownId, rows);
       }
       return [...byGodown.entries()].flatMap(([godownId, godownLines]) => {
-        if (assignedGodowns && !assignedGodowns.has(godownId)) return [];
-        if (printedKeys.has(`${invoice.id}|*`) || printedKeys.has(`${invoice.id}|${godownId}`)) return [];
+        if (!assignedGodowns.has(godownId)) return [];
+        if (printedKeys.has(`${invoice.id}|${godownId}`)) return [];
         return [{
           id: `${invoice.id}:${godownId}`,
           invoiceId: invoice.id,
+          copyType: 'GODOWN' as const,
           godownId,
           godownName: godownLines[0]?.godownName ?? 'Unknown godown',
           invoiceNumber: invoice.invoiceNumber,
@@ -341,14 +357,19 @@ export class SalesInvoiceController {
   @ApiOperation({ summary: 'Preview a delivery slip without consuming its single print' })
   async previewDeliverySlip(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query('godownId', ParseUUIDPipe) godownId: string,
+    @Query('godownId', new ParseUUIDPipe({ optional: true })) godownId: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
     const data = await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
       new SalesInvoicePrintQuery(id, godownId),
     );
-    if (!(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
-    if (await this.invoices.deliverySlipPrinted(id, godownId)) {
+    const godownStaff = user.roles.includes('GODOWN STAFF');
+    if (godownStaff && !godownId) throw new ValidationError('Select an assigned godown copy.');
+    if (godownId && !(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
+    const printed = godownId
+      ? await this.invoices.deliverySlipPrinted(id, godownId)
+      : await this.invoices.originalDeliverySlipPrinted(id);
+    if (printed) {
       throw new ValidationError('The delivery slip has already been printed. Only one print is allowed.');
     }
     return data;
@@ -359,13 +380,15 @@ export class SalesInvoiceController {
   @ApiOperation({ summary: 'Issue a delivery slip; every user is limited to one copy' })
   async printDeliverySlip(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query('godownId', ParseUUIDPipe) godownId: string,
+    @Query('godownId', new ParseUUIDPipe({ optional: true })) godownId: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
     await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
       new SalesInvoicePrintQuery(id, godownId),
     );
-    if (!(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
+    const godownStaff = user.roles.includes('GODOWN STAFF');
+    if (godownStaff && !godownId) throw new ValidationError('Select an assigned godown copy.');
+    if (godownId && !(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
     return this.commandBus.execute(new PrintDeliverySlipCommand(id, godownId, user.id));
   }
 

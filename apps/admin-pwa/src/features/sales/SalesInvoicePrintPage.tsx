@@ -198,7 +198,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
               window.print();
               return;
             }
-            if (!id || !deliveryGodownId || deliveryPrinted || claimDeliveryPrint.isPending) return;
+            if (!id || deliveryPrinted || claimDeliveryPrint.isPending) return;
 
             // Lock this page immediately. The API claim provides the permanent lock, so
             // returning to the invoice cannot obtain another copy from cached page data.

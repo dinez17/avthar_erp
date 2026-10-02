@@ -28,8 +28,9 @@ export interface SalesInvoiceFilters {
 export interface DeliverySlipListItem {
   id: string;
   invoiceId: string;
-  godownId: string;
-  godownName: string;
+  copyType: 'ORIGINAL' | 'GODOWN';
+  godownId: string | null;
+  godownName: string | null;
   invoiceNumber: string;
   invoiceDate: string;
   customerName: string;
@@ -72,10 +73,11 @@ export function useSalesInvoicePrint(id: string | null) {
 }
 
 export function useDeliverySlipPreview(id: string | null, godownId: string | null) {
+  const suffix = godownId ? `?godownId=${godownId}` : '';
   return useQuery({
     queryKey: [KEY, id, godownId, 'delivery-slip-preview'],
-    queryFn: () => apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-preview?godownId=${godownId}`),
-    enabled: Boolean(id && godownId),
+    queryFn: () => apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-preview${suffix}`),
+    enabled: Boolean(id),
   });
 }
 
@@ -93,8 +95,8 @@ export function useDeliverySlips(query: PaginationQuery) {
 export function useClaimDeliverySlipPrint() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, godownId }: { id: string; godownId: string }) =>
-      apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-print?godownId=${godownId}`, {
+    mutationFn: ({ id, godownId }: { id: string; godownId: string | null }) =>
+      apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-print${godownId ? `?godownId=${godownId}` : ''}`, {
         method: 'POST',
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY, 'delivery-slips'] }),

@@ -46,17 +46,19 @@ async function seedRoles(): Promise<void> {
       });
     }
   }
-  // Delivery-slip issuance is deliberately assigned only through its dedicated role.
+  // Delivery-slip issuance is deliberately assigned only through its two dedicated roles.
   // Remove a mapping left by an older seed where ADMIN inherited every permission.
   const deliveryPermission = await prisma.permission.findUnique({
     where: { code: PERMISSIONS.DELIVERY_SLIP_PRINT },
   });
   if (deliveryPermission) {
-    const dedicatedRole = await prisma.role.findUnique({ where: { name: 'GODOWN STAFF' } });
+    const dedicatedRoles = await prisma.role.findMany({
+      where: { name: { in: ['GODOWN STAFF', 'DELIVERY SLIP PRINT'] } }, select: { id: true },
+    });
     await prisma.rolePermission.deleteMany({
       where: {
         permissionId: deliveryPermission.id,
-        ...(dedicatedRole ? { roleId: { not: dedicatedRole.id } } : {}),
+        roleId: { notIn: dedicatedRoles.map((role) => role.id) },
       },
     });
   }

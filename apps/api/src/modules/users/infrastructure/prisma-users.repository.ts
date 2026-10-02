@@ -50,7 +50,7 @@ export class PrismaUsersRepository implements UsersRepository {
     godownIds: UUID[],
   ): Promise<UUID[]> {
     const godownStaff = await db.role.count({
-      where: { id: { in: roleIds }, name: { in: ['GODOWN STAFF', 'DELIVERY SLIP PRINT'] }, deletedAt: null },
+      where: { id: { in: roleIds }, name: 'GODOWN STAFF', deletedAt: null },
     });
     if (!godownStaff) return [];
     if (godownIds.length === 0) throw new ValidationError('Assign at least one godown to godown staff');

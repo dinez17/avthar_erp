@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
   buildPaginated,
   ConflictError,
@@ -1731,15 +1731,11 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
         throw new ValidationError('Post the sales invoice before printing it.');
       }
 
-      const legacyPrint = await tx.auditLog.findFirst({
-        where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
-        select: { id: true },
-      });
       const priorPrint = await tx.deliverySlipPrint.findUnique({
         where: { salesInvoiceId_godownId: { salesInvoiceId: id, godownId } },
         select: { id: true },
       });
-      if (legacyPrint || priorPrint) {
+      if (priorPrint) {
         throw new ValidationError('The delivery slip has already been printed.');
       }
 
@@ -1760,29 +1756,73 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
   }
 
   async deliverySlipPrinted(id: UUID, godownId: UUID): Promise<boolean> {
-    const [legacyPrint, print] = await Promise.all([this.prisma.auditLog.findFirst({
-      where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
-      select: { id: true },
-    }), this.prisma.deliverySlipPrint.findUnique({
+    const print = await this.prisma.deliverySlipPrint.findUnique({
       where: { salesInvoiceId_godownId: { salesInvoiceId: id, godownId } },
       select: { id: true },
-    })]);
-    return Boolean(legacyPrint || print);
+    });
+    return Boolean(print);
   }
 
   async printedDeliverySlipKeys(ids: UUID[]): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
-    const [legacyPrints, prints] = await Promise.all([this.prisma.auditLog.findMany({
-      where: { entity: 'SalesInvoice', entityId: { in: ids }, action: 'DELIVERY_SLIP_PRINTED' },
-      select: { entityId: true },
-      distinct: ['entityId'],
-    }), this.prisma.deliverySlipPrint.findMany({
+    const prints = await this.prisma.deliverySlipPrint.findMany({
       where: { salesInvoiceId: { in: ids } },
       select: { salesInvoiceId: true, godownId: true },
-    })]);
-    const keys = new Set(prints.map((print) => `${print.salesInvoiceId}|${print.godownId}`));
-    for (const legacy of legacyPrints) keys.add(`${legacy.entityId}|*`);
-    return keys;
+    });
+    return new Set(prints.map((print) => `${print.salesInvoiceId}|${print.godownId}`));
+  }
+
+  async claimOriginalDeliverySlipPrint(id: UUID, actorId: UUID): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`delivery-slip-original:${id}`}))`;
+      const invoice = await tx.salesInvoice.findFirst({
+        where: { id, deletedAt: null }, select: { status: true },
+      });
+      if (!invoice) throw new NotFoundError('Sales invoice not found');
+      if (invoice.status !== 'POSTED') throw new ValidationError('Post the sales invoice before printing it.');
+      const prior = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM audit_logs
+        WHERE entity = 'SalesInvoice' AND "entityId" = ${id}
+          AND (
+            action = 'DELIVERY_SLIP_ORIGINAL_PRINTED'
+            OR (action = 'DELIVERY_SLIP_PRINTED' AND (changes IS NULL OR NOT (changes ? 'godownId')))
+          )
+        LIMIT 1
+      `;
+      if (prior.length) throw new ValidationError('The original delivery slip has already been printed.');
+      await tx.auditLog.create({
+        data: {
+          entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_ORIGINAL_PRINTED',
+          userId: actorId, changes: { reprint: false, copy: 'original' },
+        },
+      });
+    });
+  }
+
+  async originalDeliverySlipPrinted(id: UUID): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM audit_logs
+      WHERE entity = 'SalesInvoice' AND "entityId" = ${id}
+        AND (
+          action = 'DELIVERY_SLIP_ORIGINAL_PRINTED'
+          OR (action = 'DELIVERY_SLIP_PRINTED' AND (changes IS NULL OR NOT (changes ? 'godownId')))
+        )
+      LIMIT 1
+    `;
+    return rows.length > 0;
+  }
+
+  async printedOriginalDeliverySlipIds(ids: UUID[]): Promise<Set<UUID>> {
+    if (ids.length === 0) return new Set();
+    const rows = await this.prisma.$queryRaw<Array<{ entityId: UUID }>>`
+      SELECT DISTINCT "entityId" FROM audit_logs
+      WHERE entity = 'SalesInvoice' AND "entityId" IN (${Prisma.join(ids)})
+        AND (
+          action = 'DELIVERY_SLIP_ORIGINAL_PRINTED'
+          OR (action = 'DELIVERY_SLIP_PRINTED' AND (changes IS NULL OR NOT (changes ? 'godownId')))
+        )
+    `;
+    return new Set(rows.map((row) => row.entityId));
   }
 
   async assignedGodownIds(userId: UUID): Promise<Set<UUID>> {

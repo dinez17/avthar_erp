@@ -138,6 +138,10 @@ export interface SalesInvoiceRepository {
   deliverySlipPrinted(id: UUID, godownId: UUID): Promise<boolean>;
   /** Composite invoice|godown keys whose single print has been claimed. */
   printedDeliverySlipKeys(invoiceIds: UUID[]): Promise<Set<string>>;
+  /** One complete original copy, independent from the godown-copy locks. */
+  claimOriginalDeliverySlipPrint(id: UUID, actorId: UUID): Promise<void>;
+  originalDeliverySlipPrinted(id: UUID): Promise<boolean>;
+  printedOriginalDeliverySlipIds(invoiceIds: UUID[]): Promise<Set<UUID>>;
   assignedGodownIds(userId: UUID): Promise<Set<UUID>>;
   billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties>;
   /**

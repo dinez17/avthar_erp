@@ -27,7 +27,8 @@ export function DeliverySlipsPage(): JSX.Element {
     { field: 'customerName', headerName: 'Customer', minWidth: 220 },
     { field: 'customerMobile', headerName: 'Phone', minWidth: 140 },
     { field: 'branchName', headerName: 'Branch', minWidth: 200 },
-    { field: 'godownName', headerName: 'Godown', minWidth: 180 },
+    { field: 'copyType', headerName: 'Copy', minWidth: 110, valueFormatter: (params) => params.value === 'ORIGINAL' ? 'Original' : 'Godown' },
+    { field: 'godownName', headerName: 'Godown', minWidth: 180, valueFormatter: (params) => params.value ?? 'All godowns' },
     { field: 'salesmanName', headerName: 'Salesman', minWidth: 150 },
     { field: 'itemCount', headerName: 'Items', maxWidth: 90 },
     { field: 'totalBoxes', headerName: 'Boxes', maxWidth: 90 },
@@ -41,7 +42,7 @@ export function DeliverySlipsPage(): JSX.Element {
             size="small"
             color="primary"
             onClick={() => params.data && navigate(
-              `/sales-invoices/${params.data.invoiceId}/print?document=delivery&paper=80mm&godownId=${params.data.godownId}`,
+              `/sales-invoices/${params.data.invoiceId}/print?document=delivery&paper=80mm${params.data.godownId ? `&godownId=${params.data.godownId}` : ''}`,
             )}
           >
             <PrintIcon fontSize="small" />
@@ -54,7 +55,7 @@ export function DeliverySlipsPage(): JSX.Element {
   return (
     <PageContainer
       title="Delivery slips"
-      subtitle="View posted delivery details and issue each godown-wise slip once."
+      subtitle="Original delivery slips and assigned godown copies are each limited to one print."
     >
       <DataTable
         rows={data?.items ?? []}

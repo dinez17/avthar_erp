@@ -61,7 +61,7 @@ export class SalesInvoicePrintQuery {
 export class PrintDeliverySlipCommand {
   constructor(
     public readonly id: UUID,
-    public readonly godownId: UUID,
+    public readonly godownId: UUID | undefined,
     public readonly actorId: UUID,
   ) {}
 }
@@ -681,7 +681,11 @@ export class PrintDeliverySlipHandler
   async execute(command: PrintDeliverySlipCommand): Promise<SalesInvoicePrintData> {
     const data = await this.invoices.printData(command.id, command.godownId);
     if (!data) throw new NotFoundError('Sales invoice not found');
-    await this.invoices.claimDeliverySlipPrint(command.id, command.godownId, command.actorId);
+    if (command.godownId) {
+      await this.invoices.claimDeliverySlipPrint(command.id, command.godownId, command.actorId);
+    } else {
+      await this.invoices.claimOriginalDeliverySlipPrint(command.id, command.actorId);
+    }
     return data;
   }
 }

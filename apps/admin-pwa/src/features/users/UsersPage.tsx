@@ -205,7 +205,7 @@ export function UsersPage(): JSX.Element {
   const selectedBranchIds = form.watch('branchIds');
   const isGodownStaff = (rolesQuery.data?.items ?? []).some(
     (role) => selectedRoleIds.includes(role.id) &&
-      (role.name === 'GODOWN STAFF' || role.name === 'DELIVERY SLIP PRINT'),
+      role.name === 'GODOWN STAFF',
   );
   const availableGodowns = (godownsQuery.data ?? []).filter(
     (godown) => godown.parentId && selectedBranchIds.includes(godown.parentId),

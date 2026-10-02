@@ -70,11 +70,69 @@ const round3 = (value: number): number => Math.round(value * 1000) / 1000;
 /** Apply money received before billing to the invoice that has just been posted. */
 async function allocateCustomerAdvances(
   tx: Prisma.TransactionClient,
-  invoice: { id: string; customerId: string; branchId: string; grandTotal: Prisma.Decimal; paidAmount: Prisma.Decimal },
+  invoice: { id: string; customerId: string; branchId: string; invoiceDate: Date; grandTotal: Prisma.Decimal; paidAmount: Prisma.Decimal },
   updatedBy: string,
 ): Promise<void> {
   let outstanding = round2(Number(invoice.grandTotal) - Number(invoice.paidAmount));
   if (outstanding <= 0.005) return;
+
+  // An unallocated receipt is not necessarily an advance. It may have paid the
+  // customer's imported opening balance (which has no invoice row to allocate to).
+  // Only use the amount by which the customer's complete ledger was in credit before
+  // this invoice. This keeps old-balance payments from silently settling a new bill.
+  const customer = await tx.customer.findUniqueOrThrow({
+    where: { id: invoice.customerId },
+    select: { openingBalance: true },
+  });
+  const [priorInvoices, returns, receiptCredits, returnIds] = await Promise.all([
+    tx.salesInvoice.aggregate({
+      where: {
+        customerId: invoice.customerId,
+        id: { not: invoice.id },
+        status: 'POSTED',
+        deletedAt: null,
+        invoiceDate: { lte: invoice.invoiceDate },
+      },
+      _sum: { grandTotal: true },
+    }),
+    tx.salesReturn.aggregate({
+      where: { customerId: invoice.customerId, returnDate: { lte: invoice.invoiceDate } },
+      _sum: { grandTotal: true },
+    }),
+    tx.customerReceipt.aggregate({
+      where: {
+        customerId: invoice.customerId,
+        status: 'POSTED',
+        deletedAt: null,
+        receiptDate: { lte: invoice.invoiceDate },
+      },
+      _sum: { amount: true },
+    }),
+    tx.salesReturn.findMany({
+      where: { customerId: invoice.customerId, returnDate: { lte: invoice.invoiceDate } },
+      select: { id: true },
+    }),
+  ]);
+  const refunds = await tx.cashEntry.aggregate({
+    where: {
+      reversedAt: null,
+      entryDate: { lte: invoice.invoiceDate },
+      OR: [
+        { refType: 'CUSTOMER_REFUND', refId: invoice.customerId },
+        { refType: 'SALES_RETURN_REFUND', refId: { in: returnIds.map((row) => row.id) } },
+      ],
+    },
+    _sum: { amount: true },
+  });
+  const balanceBeforeInvoice = round2(
+    Number(customer.openingBalance) +
+      Number(priorInvoices._sum.grandTotal ?? 0) +
+      Number(refunds._sum.amount ?? 0) -
+      Number(returns._sum.grandTotal ?? 0) -
+      Number(receiptCredits._sum.amount ?? 0),
+  );
+  let availableAdvance = round2(Math.max(0, -balanceBeforeInvoice));
+  if (availableAdvance <= 0.005) return;
 
   const receipts = await tx.customerReceipt.findMany({
     where: {
@@ -82,16 +140,17 @@ async function allocateCustomerAdvances(
       branchId: invoice.branchId,
       status: 'POSTED',
       deletedAt: null,
+      receiptDate: { lte: invoice.invoiceDate },
     },
     select: { id: true, receiptNumber: true, amount: true, allocatedAmount: true },
     orderBy: [{ receiptDate: 'asc' }, { createdAt: 'asc' }],
   });
 
   for (const receipt of receipts) {
-    if (outstanding <= 0.005) break;
+    if (outstanding <= 0.005 || availableAdvance <= 0.005) break;
     const available = round2(Number(receipt.amount) - Number(receipt.allocatedAmount));
     if (available <= 0.005) continue;
-    const amount = round2(Math.min(available, outstanding));
+    const amount = round2(Math.min(available, outstanding, availableAdvance));
 
     // Compare the old allocated value while incrementing it. A simultaneous allocation
     // then fails this transaction instead of spending the same advance twice.
@@ -112,6 +171,7 @@ async function allocateCustomerAdvances(
       data: { paidAmount: { increment: amount }, updatedBy },
     });
     outstanding = round2(outstanding - amount);
+    availableAdvance = round2(availableAdvance - amount);
   }
 }
 

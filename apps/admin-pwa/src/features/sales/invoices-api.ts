@@ -83,11 +83,13 @@ export function useDeliverySlips(query: PaginationQuery) {
 
 /** Claims the one permitted delivery-slip copy at the moment the user presses Print. */
 export function useClaimDeliverySlipPrint() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-print`, {
         method: 'POST',
       }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY, 'delivery-slips'] }),
   });
 }
 

@@ -135,6 +135,10 @@ export interface SalesInvoiceRepository {
   printData(id: UUID): Promise<SalesInvoicePrintData | null>;
   /** Records the single permitted delivery-slip issuance for an invoice. */
   claimDeliverySlipPrint(id: UUID, actorId: UUID): Promise<void>;
+  /** True once the invoice's only delivery-slip print has been claimed. */
+  deliverySlipPrinted(id: UUID): Promise<boolean>;
+  /** Invoice ids whose one permitted delivery-slip print has already been claimed. */
+  printedDeliverySlipIds(ids: UUID[]): Promise<Set<UUID>>;
   billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties>;
   /**
    * Refuses lines shipping from a godown that belongs to a different branch.

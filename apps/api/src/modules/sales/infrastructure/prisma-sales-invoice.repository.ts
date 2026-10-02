@@ -1676,6 +1676,24 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     });
   }
 
+  async deliverySlipPrinted(id: UUID): Promise<boolean> {
+    const print = await this.prisma.auditLog.findFirst({
+      where: { entity: 'SalesInvoice', entityId: id, action: 'DELIVERY_SLIP_PRINTED' },
+      select: { id: true },
+    });
+    return Boolean(print);
+  }
+
+  async printedDeliverySlipIds(ids: UUID[]): Promise<Set<UUID>> {
+    if (ids.length === 0) return new Set();
+    const prints = await this.prisma.auditLog.findMany({
+      where: { entity: 'SalesInvoice', entityId: { in: ids }, action: 'DELIVERY_SLIP_PRINTED' },
+      select: { entityId: true },
+      distinct: ['entityId'],
+    });
+    return new Set(prints.map((print) => print.entityId));
+  }
+
   async billingParties(customerId: UUID, branchId: UUID): Promise<BillingParties> {
     const [customer, branch, posted] = await Promise.all([
       this.prisma.customer.findFirst({

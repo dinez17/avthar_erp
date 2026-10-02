@@ -234,9 +234,11 @@ export class SalesInvoiceController {
         toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,
       }),
     );
+    const printedIds = await this.invoices.printedDeliverySlipIds(result.items.map((invoice) => invoice.id));
+    const available = result.items.filter((invoice) => !printedIds.has(invoice.id));
     return {
       meta: result.meta,
-      items: result.items.map((invoice) => ({
+      items: available.map((invoice) => ({
         id: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         invoiceDate: invoice.invoiceDate,
@@ -310,6 +312,9 @@ export class SalesInvoiceController {
       new SalesInvoicePrintQuery(id),
     );
     if (!this.mayAccessBranch(user, data.invoice.branchId)) throw new NotFoundError('Sales invoice not found');
+    if (await this.invoices.deliverySlipPrinted(id)) {
+      throw new ValidationError('The delivery slip has already been printed. Only one print is allowed.');
+    }
     return data;
   }
 

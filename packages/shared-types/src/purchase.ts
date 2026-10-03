@@ -33,8 +33,13 @@ export interface PurchaseOrderItem {
   poNumber: string;
   supplierId: UUID;
   supplierName: string;
+  supplierAddress: string | null;
   branchId: UUID;
   branchName: string;
+  deliveryAddress: string | null;
+  deliveryCity: string | null;
+  deliveryState: string | null;
+  deliveryPincode: string | null;
   orderDate: ISODateString;
   expectedDate: ISODateString | null;
   status: PurchaseOrderStatus;

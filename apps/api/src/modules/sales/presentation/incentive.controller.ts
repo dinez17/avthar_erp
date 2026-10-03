@@ -33,7 +33,7 @@ export class IncentiveController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  @RequirePermissions(PERMISSIONS.PROFIT_REPORT_READ)
+  @RequirePermissions(PERMISSIONS.INCENTIVE_READ)
   async list() {
     const rows = await this.prisma.productIncentive.findMany({
       include: { product: { select: { sku: true, name: true } } },
@@ -43,7 +43,7 @@ export class IncentiveController {
   }
 
   @Post()
-  @RequirePermissions(PERMISSIONS.PRODUCT_UPDATE)
+  @RequirePermissions(PERMISSIONS.INCENTIVE_MANAGE)
   async create(@Body() input: CreateIncentiveDto) {
     const validFrom = new Date(input.validFrom);
     const validTo = new Date(input.validTo);
@@ -60,7 +60,7 @@ export class IncentiveController {
   }
 
   @Post('bulk')
-  @RequirePermissions(PERMISSIONS.PRODUCT_UPDATE)
+  @RequirePermissions(PERMISSIONS.INCENTIVE_MANAGE)
   async createBulk(@Body() input: BulkCreateIncentiveDto) {
     const productIds = input.items.map((item) => item.productId);
     if (new Set(productIds).size !== productIds.length) throw new BadRequestException('Each product may appear only once');
@@ -77,7 +77,7 @@ export class IncentiveController {
   }
 
   @Get('report')
-  @RequirePermissions(PERMISSIONS.PROFIT_REPORT_READ)
+  @RequirePermissions(PERMISSIONS.INCENTIVE_READ)
   async report(@Query() query: IncentiveReportQueryDto) {
     const from = new Date(query.from); from.setHours(0, 0, 0, 0);
     const to = new Date(query.to); to.setHours(23, 59, 59, 999);

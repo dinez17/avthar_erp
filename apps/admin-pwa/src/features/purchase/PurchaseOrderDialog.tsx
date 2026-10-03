@@ -196,7 +196,7 @@ export function PurchaseOrderDialog({
             />
             <TextField
               select
-              label="Branch *"
+              label="Delivery address *"
               size="small"
               fullWidth={false}
               value={branchId}
@@ -205,7 +205,7 @@ export function PurchaseOrderDialog({
             >
               {(branches.data ?? []).map((b) => (
                 <MenuItem key={b.id} value={b.id}>
-                  {b.name}
+                  {b.name}{b.city ? ` · ${b.city}` : ''}{b.pincode ? ` · ${b.pincode}` : ''}
                 </MenuItem>
               ))}
             </TextField>

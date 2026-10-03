@@ -65,6 +65,8 @@ export const PERMISSIONS = {
   PRODUCT_DELETE: 'product:delete',
   PRICE_READ: 'price:read',
   PRICE_UPDATE: 'price:update',
+  INCENTIVE_READ: 'incentive:read',
+  INCENTIVE_MANAGE: 'incentive:manage',
   CUSTOMER_CREATE: 'customer:create',
   CUSTOMER_READ: 'customer:read',
   CUSTOMER_UPDATE: 'customer:update',

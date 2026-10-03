@@ -17,8 +17,8 @@ import type {
 } from '../domain/purchase-order.repository';
 
 const include = {
-  supplier: { select: { name: true } },
-  branch: { select: { name: true } },
+  supplier: { select: { name: true, addressLine1: true, addressLine2: true, city: true, state: true, pincode: true } },
+  branch: { select: { name: true, addressLine1: true, addressLine2: true, city: true, state: true, pincode: true } },
   lines: {
     include: {
       product: { select: { sku: true, name: true, piecesPerBox: true, baseUom: true } },
@@ -35,8 +35,13 @@ const toItem = (row: Row, withLines: boolean): PurchaseOrderItem => ({
   poNumber: row.poNumber,
   supplierId: row.supplierId,
   supplierName: row.supplier.name,
+  supplierAddress: [row.supplier.addressLine1, row.supplier.addressLine2, row.supplier.city, row.supplier.state, row.supplier.pincode].filter(Boolean).join(', ') || null,
   branchId: row.branchId,
   branchName: row.branch.name,
+  deliveryAddress: [row.branch.addressLine1, row.branch.addressLine2].filter(Boolean).join(', ') || null,
+  deliveryCity: row.branch.city,
+  deliveryState: row.branch.state,
+  deliveryPincode: row.branch.pincode,
   orderDate: row.orderDate.toISOString(),
   expectedDate: row.expectedDate ? row.expectedDate.toISOString() : null,
   status: row.status,

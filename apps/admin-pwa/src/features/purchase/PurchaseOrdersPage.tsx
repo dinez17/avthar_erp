@@ -3,12 +3,14 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloseIcon from '@mui/icons-material/Close';
 import EditIcon from '@mui/icons-material/Edit';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import PrintIcon from '@mui/icons-material/Print';
 import {
   Alert,
   Autocomplete,
   Chip,
   Dialog,
   DialogContent,
+  DialogActions,
   DialogTitle,
   IconButton,
   MenuItem,
@@ -57,6 +59,15 @@ const STATUSES: PurchaseOrderStatus[] = [
   'RECEIVED',
   'CANCELLED',
 ];
+
+const printPurchaseOrder = (order: PurchaseOrderItem): void => {
+  const rows = (order.lines ?? []).map((line, index) => `<tr><td>${index + 1}</td><td>${line.sku}</td><td>${line.productName}</td><td class="n">${line.qtyBoxes}</td><td class="n">${money(line.rate)}</td><td class="n">${line.gstRate}%</td><td class="n">${money(line.lineTotal)}</td></tr>`).join('');
+  const delivery = [order.deliveryAddress, order.deliveryCity, order.deliveryState, order.deliveryPincode].filter(Boolean).join(', ');
+  const popup = window.open('', '_blank');
+  if (!popup) return;
+  popup.document.write(`<!doctype html><html><head><title>${order.poNumber}</title><style>@page{size:A4;margin:12mm}body{font:12px Arial;color:#000}h1{text-align:center;font-size:20px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.box{border:1px solid #000;padding:10px;line-height:1.5}table{width:100%;border-collapse:collapse}th,td{border:1px solid #000;padding:6px}.n{text-align:right}.totals{margin-left:auto;width:280px;margin-top:12px}.sign{display:flex;justify-content:space-between;margin-top:70px}</style></head><body><h1>PURCHASE ORDER</h1><div><b>PO No:</b> ${order.poNumber}<br><b>Date:</b> ${new Date(order.orderDate).toLocaleDateString('en-IN')}</div><div class="grid"><div class="box"><b>Supplier</b><br>${order.supplierName}<br>${order.supplierAddress ?? ''}</div><div class="box"><b>Delivery address</b><br>${order.branchName}<br>${delivery}</div></div><table><thead><tr><th>#</th><th>SKU</th><th>Product</th><th>Qty</th><th>Rate</th><th>GST</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table><table class="totals"><tr><td>Sub total</td><td class="n">${money(order.subTotal)}</td></tr><tr><td>GST</td><td class="n">${money(order.gstAmount)}</td></tr><tr><th>Grand total</th><th class="n">${money(order.grandTotal)}</th></tr></table>${order.remarks ? `<p><b>Remarks:</b> ${order.remarks}</p>` : ''}<div class="sign"><span>Supplier signature</span><span>Authorised signature</span></div><script>window.onload=()=>window.print()<\/script></body></html>`);
+  popup.document.close();
+};
 
 const money = (value: number): string =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -360,6 +371,10 @@ export function PurchaseOrdersPage(): JSX.Element {
             </Stack>
           )}
         </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setViewingId(null)}>Close</Button>
+          <Button variant="contained" startIcon={<PrintIcon />} disabled={!detail.data} onClick={() => detail.data && printPurchaseOrder(detail.data)}>Print A4</Button>
+        </DialogActions>
       </Dialog>
 
       <ConfirmDialog

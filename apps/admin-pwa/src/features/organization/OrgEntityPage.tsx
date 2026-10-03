@@ -19,7 +19,7 @@ import {
   TextField,
 } from '@mui/material';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { GST_STATES } from '@tiles-erp/config';
@@ -28,6 +28,7 @@ import { ConfirmDialog, PageContainer, useSaveShortcut } from '@tiles-erp/ui';
 import type { OrgNodeItem } from '@tiles-erp/shared-types';
 import { DataTable } from '../../components/DataTable';
 import { ApiError } from '../../lib/api-client';
+import { lookupPincode } from '../../lib/pincode';
 import {
   useCreateOrgNode,
   useDeleteOrgNode,
@@ -153,6 +154,19 @@ export function OrgEntityPage({ config }: { config: OrgEntityConfig }): JSX.Elem
 
   const schema = useMemo(() => buildSchema(config), [config]);
   const form = useForm<OrgFormValues>({ resolver: zodResolver(schema), defaultValues: emptyValues });
+  const pincode = form.watch('pincode');
+
+  useEffect(() => {
+    if (!dialogOpen || !config.hasContact || !/^\d{6}$/.test(pincode)) return;
+    let active = true;
+    void lookupPincode(pincode).then((location) => {
+      if (!active) return;
+      form.setValue('city', location.city, { shouldValidate: true });
+      const state = GST_STATES.find((item) => item.name.toLowerCase() === location.state.toLowerCase());
+      if (state) form.setValue('stateCode', state.code, { shouldValidate: true });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [config.hasContact, dialogOpen, form, pincode]);
 
   const openCreate = (): void => {
     setEditing(null);

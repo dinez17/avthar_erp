@@ -10,11 +10,11 @@ export function useIncentives() {
 }
 export function useCreateIncentive() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: { productId: string; validFrom: string; validTo: string; amountPerBox: number }) => apiFetch<ProductIncentiveItem>('/sales-incentives', { method: 'POST', body: JSON.stringify(input) }), onSuccess: () => client.invalidateQueries({ queryKey: ['sales-incentives'] }) });
+  return useMutation({ mutationFn: (input: { productId: string; amountPerBox: number }) => apiFetch<ProductIncentiveItem>('/sales-incentives', { method: 'POST', body: JSON.stringify(input) }), onSuccess: () => client.invalidateQueries({ queryKey: ['sales-incentives'] }) });
 }
 export function useBulkCreateIncentives() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (items: { productId: string; validFrom: string; validTo: string; amountPerBox: number }[]) => apiFetch<{ created: number }>('/sales-incentives/bulk', { method: 'POST', body: JSON.stringify({ items }) }), onSuccess: () => client.invalidateQueries({ queryKey: ['sales-incentives'] }) });
+  return useMutation({ mutationFn: (items: { productId: string; amountPerBox: number }[]) => apiFetch<{ created: number }>('/sales-incentives/bulk', { method: 'POST', body: JSON.stringify({ items }) }), onSuccess: () => client.invalidateQueries({ queryKey: ['sales-incentives'] }) });
 }
 export function useIncentiveReport(filters: IncentiveFilters) {
   const params = new URLSearchParams({ from: filters.from, to: filters.to });

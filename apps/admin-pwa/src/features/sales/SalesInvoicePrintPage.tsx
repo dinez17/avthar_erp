@@ -2,6 +2,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PrintIcon from '@mui/icons-material/Print';
 import { Alert, Box, Button, MenuItem, Stack, TextField } from '@mui/material';
 import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { amountInWords, formatBoxPieces } from '@tiles-erp/shared';
 import type { SalesInvoiceLineItem, SalesInvoicePrintData } from '@tiles-erp/shared-types';
@@ -221,13 +222,14 @@ export function SalesInvoicePrintPage(): JSX.Element {
             setDeliveryPrinted(true);
             void claimDeliveryPrint.mutateAsync({ id, godownId: deliveryGodownId }).then((claimedData) => {
               // Only expose the slip to print media after the server records the single
-              // permitted copy. Hide it again when the browser print dialog closes.
-              setClaimedDeliveryData(claimedData);
-              setDeliveryPrintAuthorized(true);
-              requestAnimationFrame(() => {
-                window.print();
-                setDeliveryPrintAuthorized(false);
+              // permitted copy. Commit the fetched markup before opening the browser
+              // dialog; React's normal async batching can otherwise print a blank page.
+              flushSync(() => {
+                setClaimedDeliveryData(claimedData);
+                setDeliveryPrintAuthorized(true);
               });
+              window.print();
+              setDeliveryPrintAuthorized(false);
             }).catch(() => {
               // Keep the button locked: an uncertain network response may still have
               // recorded the print claim. A fresh attempt asks the server for the truth.

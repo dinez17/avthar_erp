@@ -902,19 +902,23 @@ function DeliverySlip({
   isGodownCopy: boolean;
 }): JSX.Element {
   const { invoice, company, branch, customerPincode } = data;
-  const lines = data.deliveryLines ?? invoice.lines ?? [];
-  const godowns = Array.from(
-    lines.reduce((groups, line) => {
-      const group = groups.get(line.godownId) ?? { name: line.godownName, lines: [] as SalesInvoiceLineItem[] };
-      group.lines.push(line);
-      groups.set(line.godownId, group);
-      return groups;
-    }, new Map<string, { name: string; lines: SalesInvoiceLineItem[] }>()),
-  ).map(([id, group]) => ({ id, ...group }));
+  const lines = isGodownCopy
+    ? data.deliveryLines ?? invoice.lines ?? []
+    : invoice.lines ?? [];
+  const slips = isGodownCopy
+    ? Array.from(
+      lines.reduce((groups, line) => {
+        const group = groups.get(line.godownId) ?? { name: line.godownName, lines: [] as SalesInvoiceLineItem[] };
+        group.lines.push(line);
+        groups.set(line.godownId, group);
+        return groups;
+      }, new Map<string, { name: string; lines: SalesInvoiceLineItem[] }>()),
+    ).map(([id, group]) => ({ id, ...group }))
+    : [{ id: 'original', name: '', lines }];
 
   return (
     <>
-      {godowns.map((godown, godownIndex) => {
+      {slips.map((godown) => {
         const totalBoxes = godown.lines.reduce((sum, line) => sum + printedBoxes(line), 0);
         const totalPieces = godown.lines.reduce((sum, line) => sum + printedPieces(line), 0);
         const totalWeight = totalWeightKg(godown.lines);
@@ -933,10 +937,9 @@ function DeliverySlip({
             ) : (
               <div style={{ textAlign: 'center' }}><PrintLogo /><div className="title">{company.legalName ?? company.name}</div></div>
             )}
-            <div style={{ textAlign: 'center', fontWeight: 700, padding: '2px 0' }}>{godown.name.toUpperCase()}</div>
-            {godowns.length > 1 && (
-              <div className="fine" style={{ textAlign: 'center' }}>
-                Godown slip {godownIndex + 1} of {godowns.length}
+            {isGodownCopy && (
+              <div style={{ textAlign: 'center', fontWeight: 700, padding: '2px 0' }}>
+                {godown.name.toUpperCase()}
               </div>
             )}
             {!isRoll && <div style={{ textAlign: 'center' }}>{branch.addressLines.join(' · ')}</div>}

@@ -40,6 +40,7 @@ export interface DeliverySlipListItem {
   itemCount: number;
   totalBoxes: number;
   totalPieces: number;
+  printed: boolean;
 }
 
 export interface DeliverySlipFilters {

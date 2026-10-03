@@ -63,19 +63,22 @@ export function DeliverySlipsPage(): JSX.Element {
     {
       headerName: 'Delivery slip',
       maxWidth: 130,
-      cellRenderer: (params: ICellRendererParams<DeliverySlipListItem>) => (
-        <Tooltip title="View and print delivery slip">
-          <IconButton
-            size="small"
-            color="primary"
-            onClick={() => params.data && navigate(
-              `/sales-invoices/${params.data.invoiceId}/print?document=delivery&paper=80mm${params.data.godownId ? `&godownId=${params.data.godownId}` : ''}`,
-            )}
-          >
-            <PrintIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      ),
+      cellRenderer: (params: ICellRendererParams<DeliverySlipListItem>) => {
+        if (!params.data || params.data.printed) return null;
+        return (
+          <Tooltip title="View and print delivery slip">
+            <IconButton
+              size="small"
+              color="primary"
+              onClick={() => navigate(
+                `/sales-invoices/${params.data!.invoiceId}/print?document=delivery&paper=80mm${params.data!.godownId ? `&godownId=${params.data!.godownId}` : ''}`,
+              )}
+            >
+              <PrintIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        );
+      },
     },
   ], [navigate]);
 

@@ -97,6 +97,7 @@ interface DeliverySlipListItem {
   itemCount: number;
   totalBoxes: number;
   totalPieces: number;
+  printed: boolean;
 }
 
 @ApiTags('Sales invoices')
@@ -255,7 +256,6 @@ export class SalesInvoiceController {
     const available = result.items.flatMap<DeliverySlipListItem>((invoice, index) => {
       const lines = printRows[index]?.deliveryLines ?? [];
       if (!godownMode) {
-        if (printedOriginalIds.has(invoice.id)) return [];
         return [{
           id: `${invoice.id}:original`, invoiceId: invoice.id, copyType: 'ORIGINAL' as const,
           godownId: null, godownName: null,
@@ -265,6 +265,7 @@ export class SalesInvoiceController {
           itemCount: lines.length,
           totalBoxes: lines.reduce((sum, line) => sum + line.boxes, 0),
           totalPieces: lines.reduce((sum, line) => sum + line.pieces, 0),
+          printed: printedOriginalIds.has(invoice.id),
         }];
       }
       const byGodown = new Map<string, typeof lines>();
@@ -275,7 +276,6 @@ export class SalesInvoiceController {
       }
       return [...byGodown.entries()].flatMap(([godownId, godownLines]) => {
         if (!assignedGodowns.has(godownId)) return [];
-        if (printedKeys.has(`${invoice.id}|${godownId}`)) return [];
         return [{
           id: `${invoice.id}:${godownId}`,
           invoiceId: invoice.id,
@@ -291,6 +291,7 @@ export class SalesInvoiceController {
           itemCount: godownLines.length,
           totalBoxes: godownLines.reduce((sum, line) => sum + line.boxes, 0),
           totalPieces: godownLines.reduce((sum, line) => sum + line.pieces, 0),
+          printed: printedKeys.has(`${invoice.id}|${godownId}`),
         }];
       });
     });

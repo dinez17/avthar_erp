@@ -171,7 +171,11 @@ export function SalesInvoicesPage(): JSX.Element {
   const pushSixOrbit = usePushSalesInvoiceToSixOrbit();
 
   const [viewingId, setViewingId] = useState<string | null>(null);
-  const [printMenu, setPrintMenu] = useState<{ anchor: HTMLElement; id: string } | null>(null);
+  const [printMenu, setPrintMenu] = useState<{
+    anchor: HTMLElement;
+    id: string;
+    originalDeliverySlipPrinted: boolean;
+  } | null>(null);
   const [cancelling, setCancelling] = useState<SalesInvoiceItem | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [deleting, setDeleting] = useState<SalesInvoiceItem | null>(null);
@@ -291,7 +295,11 @@ export function SalesInvoicesPage(): JSX.Element {
                   <IconButton
                     size="small"
                     disabled={invoice.status !== 'POSTED'}
-                    onClick={(event) => setPrintMenu({ anchor: event.currentTarget, id: invoice.id })}
+                    onClick={(event) => setPrintMenu({
+                      anchor: event.currentTarget,
+                      id: invoice.id,
+                      originalDeliverySlipPrinted: invoice.originalDeliverySlipPrinted,
+                    })}
                   >
                     <PrintIcon fontSize="small" />
                   </IconButton>
@@ -496,7 +504,9 @@ export function SalesInvoicesPage(): JSX.Element {
         onClose={() => setPrintMenu(null)}
       >
         {PRINT_OPTIONS.filter((option) =>
-          option.document !== 'delivery' || canPrintOriginalDeliverySlip,
+          option.document !== 'delivery' || (
+            canPrintOriginalDeliverySlip && !printMenu?.originalDeliverySlipPrinted
+          ),
         ).map((option) => (
           <MenuItem
             key={`${option.document}-${option.paper}`}

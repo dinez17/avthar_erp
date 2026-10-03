@@ -216,6 +216,7 @@ const toItem = (
   withLines: boolean,
   godownNames: Map<string, string> = new Map(),
   billedByName: string | null = null,
+  originalDeliverySlipPrinted = false,
 ): SalesInvoiceItem => {
   const grandTotal = Number(row.grandTotal);
   const paidAmount = Number(row.paidAmount);
@@ -243,6 +244,7 @@ const toItem = (
     salesmanUserId: row.salesmanUserId,
     salesmanName: row.salesmanName,
     billedByName,
+    originalDeliverySlipPrinted,
     branchId: row.branchId,
     branchName: row.branch.name,
     invoiceDate: row.invoiceDate.toISOString(),
@@ -719,9 +721,16 @@ export class PrismaSalesInvoiceRepository implements SalesInvoiceRepository {
     const creatorNames = new Map(
       creators.map((user) => [user.id, `${user.firstName} ${user.lastName}`.trim()]),
     );
+    const printedOriginalIds = await this.printedOriginalDeliverySlipIds(rows.map((row) => row.id));
 
     return buildPaginated(
-      rows.map((row) => toItem(row, false, new Map(), row.createdBy ? creatorNames.get(row.createdBy) ?? null : null)),
+      rows.map((row) => toItem(
+        row,
+        false,
+        new Map(),
+        row.createdBy ? creatorNames.get(row.createdBy) ?? null : null,
+        printedOriginalIds.has(row.id),
+      )),
       query.page,
       query.pageSize,
       total,

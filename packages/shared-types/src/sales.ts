@@ -399,6 +399,8 @@ export interface SalesInvoiceItem {
   salesmanName: string | null;
   /** User who created the invoice. */
   billedByName: string | null;
+  /** The single permitted original delivery-slip copy has already been issued. */
+  originalDeliverySlipPrinted: boolean;
   branchId: UUID;
   branchName: string;
   invoiceDate: ISODateString;

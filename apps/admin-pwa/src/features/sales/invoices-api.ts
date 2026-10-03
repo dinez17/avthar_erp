@@ -99,7 +99,7 @@ export function useClaimDeliverySlipPrint() {
       apiFetch<SalesInvoicePrintData>(`/sales-invoices/${id}/delivery-slip-print${godownId ? `?godownId=${godownId}` : ''}`, {
         method: 'POST',
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY, 'delivery-slips'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [KEY] }),
   });
 }
 

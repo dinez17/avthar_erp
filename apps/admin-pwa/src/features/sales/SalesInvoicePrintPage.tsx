@@ -356,7 +356,12 @@ export function SalesInvoicePrintPage(): JSX.Element {
         className={`inv-sheet paper-${paper}${documentType === 'delivery' && !deliveryPrintAuthorized ? ' delivery-print-locked' : ''}`}
       >
         {data ? (
-          <PrintBody data={data} isRoll={isRoll} documentType={documentType} />
+          <PrintBody
+            data={data}
+            isRoll={isRoll}
+            documentType={documentType}
+            isGodownCopy={Boolean(deliveryGodownId)}
+          />
         ) : (
           <Alert severity="info" className="print-hidden">
             Press Print to issue the one permitted delivery-slip copy. The slip is loaded only after the server locks it.
@@ -372,10 +377,12 @@ function PrintBody({
   data,
   isRoll,
   documentType,
+  isGodownCopy,
 }: {
   data: SalesInvoicePrintData;
   isRoll: boolean;
   documentType: InvoiceDocument;
+  isGodownCopy: boolean;
 }): JSX.Element {
   const { invoice, company, branch, terms, declaration, customerPincode } = data;
   const lines = invoice.lines ?? [];
@@ -383,7 +390,7 @@ function PrintBody({
   const totalWeight = totalWeightKg(lines);
 
   if (documentType === 'delivery') {
-    return <DeliverySlip data={data} isRoll={isRoll} />;
+    return <DeliverySlip data={data} isRoll={isRoll} isGodownCopy={isGodownCopy} />;
   }
 
   if (documentType === 'proforma' && !isRoll) {
@@ -885,7 +892,15 @@ function ProformaInvoice({ data }: { data: SalesInvoicePrintData }): JSX.Element
 }
 
 /** A delivery copy deliberately excludes rates, tax values and invoice totals. */
-function DeliverySlip({ data, isRoll }: { data: SalesInvoicePrintData; isRoll: boolean }): JSX.Element {
+function DeliverySlip({
+  data,
+  isRoll,
+  isGodownCopy,
+}: {
+  data: SalesInvoicePrintData;
+  isRoll: boolean;
+  isGodownCopy: boolean;
+}): JSX.Element {
   const { invoice, company, branch, customerPincode } = data;
   const lines = data.deliveryLines ?? invoice.lines ?? [];
   const godowns = Array.from(
@@ -910,7 +925,9 @@ function DeliverySlip({ data, isRoll }: { data: SalesInvoicePrintData; isRoll: b
             key={godown.id}
             style={{ padding: isRoll ? '2px' : 0 }}
           >
-            <div className="doc-title" style={{ borderBottom: '1px solid #000' }}>DELIVERY SLIP</div>
+            <div className="doc-title" style={{ borderBottom: '1px solid #000' }}>
+              {isGodownCopy ? 'GODOWN SLIP' : 'DELIVERY SLIP'}
+            </div>
             {isRoll ? (
               <div aria-label={`Barcode ${invoice.invoiceNumber}`} style={{ margin: '3px 8px', height: 26, border: '1px solid #000', background: 'repeating-linear-gradient(90deg,#000 0,#000 2px,#fff 2px,#fff 4px,#000 4px,#000 5px,#fff 5px,#fff 8px)' }} />
             ) : (

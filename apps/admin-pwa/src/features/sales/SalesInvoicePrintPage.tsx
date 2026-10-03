@@ -93,6 +93,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
   );
   const [documentType, setDocumentType] = useState<InvoiceDocument>(initialDocument);
   const [deliveryPrinted, setDeliveryPrinted] = useState(false);
+  const [deliveryPrintAuthorized, setDeliveryPrintAuthorized] = useState(false);
   const invoicePrint = useSalesInvoicePrint(documentType === 'delivery' ? null : (id ?? null));
   const deliveryPreview = useDeliverySlipPreview(
     documentType === 'delivery' ? (id ?? null) : null,
@@ -204,7 +205,13 @@ export function SalesInvoicePrintPage(): JSX.Element {
             // returning to the invoice cannot obtain another copy from cached page data.
             setDeliveryPrinted(true);
             void claimDeliveryPrint.mutateAsync({ id, godownId: deliveryGodownId }).then(() => {
-              window.print();
+              // Only expose the slip to print media after the server records the single
+              // permitted copy. Hide it again when the browser print dialog closes.
+              setDeliveryPrintAuthorized(true);
+              requestAnimationFrame(() => {
+                window.print();
+                setDeliveryPrintAuthorized(false);
+              });
             }).catch(() => {
               // Keep the button locked: an uncertain network response may still have
               // recorded the print claim. A fresh attempt asks the server for the truth.
@@ -216,6 +223,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
       </Stack>
 
       <style>{`
+        .delivery-print-guard { display: none; }
         .inv-sheet {
           width: ${sheetWidth};
           margin: 12px auto;
@@ -316,6 +324,15 @@ export function SalesInvoicePrintPage(): JSX.Element {
         @media print {
           body * { visibility: hidden !important; }
           .inv-sheet, .inv-sheet * { visibility: visible !important; }
+          .inv-sheet.delivery-print-locked,
+          .inv-sheet.delivery-print-locked * { display: none !important; }
+          .delivery-print-guard.active {
+            display: block !important;
+            visibility: visible !important;
+            padding: 12mm;
+            color: #000;
+            font: 700 14px Arial, sans-serif;
+          }
           .print-hidden, .print-hidden * { display: none !important; }
           .inv-sheet {
             position: absolute;
@@ -329,7 +346,15 @@ export function SalesInvoicePrintPage(): JSX.Element {
         }
       `}</style>
 
-      <Box className={`inv-sheet paper-${paper}`}>
+      <Box
+        className={`delivery-print-guard ${documentType === 'delivery' && !deliveryPrintAuthorized ? 'active' : ''}`}
+      >
+        Delivery slip printing is locked. Use the Print button in ERP to issue the one permitted copy.
+      </Box>
+
+      <Box
+        className={`inv-sheet paper-${paper}${documentType === 'delivery' && !deliveryPrintAuthorized ? ' delivery-print-locked' : ''}`}
+      >
         <PrintBody data={data} isRoll={isRoll} documentType={documentType} />
       </Box>
     </Box>

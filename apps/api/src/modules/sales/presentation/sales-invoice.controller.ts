@@ -32,6 +32,7 @@ import { NotFoundError, ValidationError } from '@tiles-erp/shared';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermissions } from '../../auth/decorators/permissions.decorator';
 import { RequireBranchScope } from '../../auth/decorators/scope.decorator';
+import { USER_REPOSITORY, type UserRepository } from '../../auth/domain/user.repository';
 import {
   CancelSalesInvoiceCommand,
   CreateSalesReturnCommand,
@@ -109,7 +110,24 @@ export class SalesInvoiceController {
     private readonly queryBus: QueryBus,
     @Inject(SALES_INVOICE_REPOSITORY) private readonly invoices: SalesInvoiceRepository,
     @Inject(SALES_ORDER_REPOSITORY) private readonly orders: SalesOrderRepository,
+    @Inject(USER_REPOSITORY) private readonly users: UserRepository,
   ) {}
+
+  /** Delivery-slip routing must use current role assignments, even while an older
+   * access token is still valid, so godown users always receive a godown copy. */
+  private async currentUser(user: AuthenticatedUser): Promise<AuthenticatedUser> {
+    const current = await this.users.findById(user.id);
+    if (!current || !current.isActive) return user;
+    return {
+      id: current.id,
+      email: current.email,
+      roleIds: current.roleIds,
+      roles: current.roles,
+      permissions: current.permissions,
+      branchIds: current.branchIds,
+      departmentIds: current.departmentIds,
+    };
+  }
 
   private async mayAccessGodown(user: AuthenticatedUser, godownId: string): Promise<boolean> {
     if (user.roles.includes('SUPER_ADMIN')) return true;
@@ -234,12 +252,13 @@ export class SalesInvoiceController {
     @Query() query: SalesInvoiceListQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<Paginated<DeliverySlipListItem>> {
-    const godownMode = user.roles.includes('GODOWN STAFF');
+    const liveUser = await this.currentUser(user);
+    const godownMode = liveUser.roles.includes('GODOWN STAFF');
     const result = await this.queryBus.execute<ListSalesInvoicesQuery, Paginated<SalesInvoiceItem>>(
       new ListSalesInvoicesQuery(query, {
         // Supplying godowns can belong to a different branch from the invoice.
         // Access is narrowed to the user's assigned godowns below.
-        branchIds: godownMode || user.roles.includes('SUPER_ADMIN') ? undefined : user.branchIds,
+        branchIds: godownMode || liveUser.roles.includes('SUPER_ADMIN') ? undefined : liveUser.branchIds,
         branchId: query.branchId,
         status: 'POSTED',
         fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
@@ -250,7 +269,7 @@ export class SalesInvoiceController {
     const [printedKeys, printedOriginalIds, assignedGodowns, printRows] = await Promise.all([
       this.invoices.printedDeliverySlipKeys(invoiceIds),
       this.invoices.printedOriginalDeliverySlipIds(invoiceIds),
-      godownMode ? this.invoices.assignedGodownIds(user.id) : Promise.resolve(new Set<string>()),
+      godownMode ? this.invoices.assignedGodownIds(liveUser.id) : Promise.resolve(new Set<string>()),
       Promise.all(result.items.map((invoice) => this.invoices.printData(invoice.id))),
     ]);
     const available = result.items.flatMap<DeliverySlipListItem>((invoice, index) => {
@@ -384,10 +403,11 @@ export class SalesInvoiceController {
     await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
       new SalesInvoicePrintQuery(id, godownId),
     );
-    const godownStaff = user.roles.includes('GODOWN STAFF');
+    const liveUser = await this.currentUser(user);
+    const godownStaff = liveUser.roles.includes('GODOWN STAFF');
     if (godownStaff && !godownId) throw new ValidationError('Select an assigned godown copy.');
-    if (godownId && !(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
-    return this.commandBus.execute(new PrintDeliverySlipCommand(id, godownId, user.id));
+    if (godownId && !(await this.mayAccessGodown(liveUser, godownId))) throw new NotFoundError('Delivery slip not found');
+    return this.commandBus.execute(new PrintDeliverySlipCommand(id, godownId, liveUser.id));
   }
 
   @Get(':id')

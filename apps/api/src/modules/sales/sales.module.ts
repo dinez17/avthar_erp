@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CqrsModule } from '@nestjs/cqrs';
 import { AccountsModule } from '../accounts/accounts.module';
+import { AuthModule } from '../auth/auth.module';
 import { QUOTATION_REPOSITORY } from './domain/quotation.repository';
 import { DASHBOARD_REPOSITORY } from './domain/dashboard.repository';
 import { GST_REPOSITORY } from './domain/gst.repository';
@@ -82,7 +83,7 @@ import { Gstr1ReturnHandler, GstSummaryHandler } from './application/gst.handler
 @Module({
   // AccountsModule brings CashPostingService: posting a receipt or a payment writes
   // into the named account's book in the same transaction.
-  imports: [CqrsModule, AccountsModule],
+  imports: [CqrsModule, AccountsModule, AuthModule],
   controllers: [
     ProfitController,
     IncentiveController,

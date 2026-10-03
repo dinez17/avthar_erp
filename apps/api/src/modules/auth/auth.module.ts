@@ -44,6 +44,7 @@ const queryHandlers = [GetMeHandler];
     DepartmentGuard,
   ],
   exports: [
+    USER_REPOSITORY,
     TokenService,
     PasswordService,
     JwtAuthGuard,

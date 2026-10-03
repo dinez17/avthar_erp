@@ -6,7 +6,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { amountInWords, formatBoxPieces } from '@tiles-erp/shared';
 import type { SalesInvoiceLineItem, SalesInvoicePrintData } from '@tiles-erp/shared-types';
 import { LoadingOverlay } from '@tiles-erp/ui';
-import { useClaimDeliverySlipPrint, useDeliverySlipPreview, useSalesInvoicePrint } from './invoices-api';
+import { useClaimDeliverySlipPrint, useSalesInvoicePrint } from './invoices-api';
 import { PrintLogo } from '../../app/branding';
 import { useAuth } from '../../auth/AuthProvider';
 import { PERMISSIONS } from '@tiles-erp/config';
@@ -94,14 +94,13 @@ export function SalesInvoicePrintPage(): JSX.Element {
   const [documentType, setDocumentType] = useState<InvoiceDocument>(initialDocument);
   const [deliveryPrinted, setDeliveryPrinted] = useState(false);
   const [deliveryPrintAuthorized, setDeliveryPrintAuthorized] = useState(false);
+  const [claimedDeliveryData, setClaimedDeliveryData] = useState<SalesInvoicePrintData | null>(null);
   const invoicePrint = useSalesInvoicePrint(documentType === 'delivery' ? null : (id ?? null));
-  const deliveryPreview = useDeliverySlipPreview(
-    documentType === 'delivery' ? (id ?? null) : null,
-    documentType === 'delivery' ? deliveryGodownId : null,
-  );
   const claimDeliveryPrint = useClaimDeliverySlipPrint();
-  const activePrint = documentType === 'delivery' ? deliveryPreview : invoicePrint;
-  const { data, isLoading, isError, error } = activePrint;
+  const data = documentType === 'delivery' ? claimedDeliveryData : invoicePrint.data;
+  const isLoading = documentType !== 'delivery' && invoicePrint.isLoading;
+  const isError = documentType !== 'delivery' && invoicePrint.isError;
+  const error = invoicePrint.error;
 
   useEffect(() => {
     const style = document.createElement('style');
@@ -111,7 +110,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
   }, [paper]);
 
   if (isLoading) return <LoadingOverlay open />;
-  if (isError || !data) {
+  if (documentType !== 'delivery' && (isError || !data)) {
     return (
       <Box sx={{ p: 2 }}>
         <Alert severity="error">
@@ -204,9 +203,10 @@ export function SalesInvoicePrintPage(): JSX.Element {
             // Lock this page immediately. The API claim provides the permanent lock, so
             // returning to the invoice cannot obtain another copy from cached page data.
             setDeliveryPrinted(true);
-            void claimDeliveryPrint.mutateAsync({ id, godownId: deliveryGodownId }).then(() => {
+            void claimDeliveryPrint.mutateAsync({ id, godownId: deliveryGodownId }).then((claimedData) => {
               // Only expose the slip to print media after the server records the single
               // permitted copy. Hide it again when the browser print dialog closes.
+              setClaimedDeliveryData(claimedData);
               setDeliveryPrintAuthorized(true);
               requestAnimationFrame(() => {
                 window.print();
@@ -355,7 +355,13 @@ export function SalesInvoicePrintPage(): JSX.Element {
       <Box
         className={`inv-sheet paper-${paper}${documentType === 'delivery' && !deliveryPrintAuthorized ? ' delivery-print-locked' : ''}`}
       >
-        <PrintBody data={data} isRoll={isRoll} documentType={documentType} />
+        {data ? (
+          <PrintBody data={data} isRoll={isRoll} documentType={documentType} />
+        ) : (
+          <Alert severity="info" className="print-hidden">
+            Press Print to issue the one permitted delivery-slip copy. The slip is loaded only after the server locks it.
+          </Alert>
+        )}
       </Box>
     </Box>
   );

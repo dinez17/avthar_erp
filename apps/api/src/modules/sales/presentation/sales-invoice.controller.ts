@@ -360,19 +360,15 @@ export class SalesInvoiceController {
     @Query('godownId', new ParseUUIDPipe({ optional: true })) godownId: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SalesInvoicePrintData> {
-    const data = await this.queryBus.execute<SalesInvoicePrintQuery, SalesInvoicePrintData>(
-      new SalesInvoicePrintQuery(id, godownId),
+    void id;
+    void godownId;
+    void user;
+    // Returning printable HTML data from a GET allowed an already-open or cached page to
+    // print repeatedly without contacting the one-copy claim endpoint. Current clients
+    // obtain the document only from POST /delivery-slip-print after the claim succeeds.
+    throw new ValidationError(
+      'Delivery slip preview is disabled. Refresh the ERP and use Print to issue the one permitted copy.',
     );
-    const godownStaff = user.roles.includes('GODOWN STAFF');
-    if (godownStaff && !godownId) throw new ValidationError('Select an assigned godown copy.');
-    if (godownId && !(await this.mayAccessGodown(user, godownId))) throw new NotFoundError('Delivery slip not found');
-    const printed = godownId
-      ? await this.invoices.deliverySlipPrinted(id, godownId)
-      : await this.invoices.originalDeliverySlipPrinted(id);
-    if (printed) {
-      throw new ValidationError('The delivery slip has already been printed. Only one print is allowed.');
-    }
-    return data;
   }
 
   @Post(':id/delivery-slip-print')

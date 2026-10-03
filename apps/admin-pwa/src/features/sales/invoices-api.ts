@@ -42,6 +42,12 @@ export interface DeliverySlipListItem {
   totalPieces: number;
 }
 
+export interface DeliverySlipFilters {
+  fromDate?: string;
+  toDate?: string;
+  branchId?: string;
+}
+
 export function useSalesInvoices(query: PaginationQuery, filters: SalesInvoiceFilters) {
   const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
   if (query.search) params.set('search', query.search);
@@ -81,11 +87,14 @@ export function useDeliverySlipPreview(id: string | null, godownId: string | nul
   });
 }
 
-export function useDeliverySlips(query: PaginationQuery) {
+export function useDeliverySlips(query: PaginationQuery, filters: DeliverySlipFilters) {
   const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
   if (query.search) params.set('search', query.search);
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
   return useQuery({
-    queryKey: [KEY, 'delivery-slips', query],
+    queryKey: [KEY, 'delivery-slips', query, filters],
     queryFn: () => apiFetch<Paginated<DeliverySlipListItem>>(`/sales-invoices/delivery-slips?${params.toString()}`),
     placeholderData: (previous) => previous,
   });

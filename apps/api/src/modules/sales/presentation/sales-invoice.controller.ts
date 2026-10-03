@@ -239,6 +239,7 @@ export class SalesInvoiceController {
         // Supplying godowns can belong to a different branch from the invoice.
         // Access is narrowed to the user's assigned godowns below.
         branchIds: godownMode || user.roles.includes('SUPER_ADMIN') ? undefined : user.branchIds,
+        branchId: query.branchId,
         status: 'POSTED',
         fromDate: query.fromDate ? new Date(`${query.fromDate}T00:00:00.000Z`) : undefined,
         toDate: query.toDate ? new Date(`${query.toDate}T23:59:59.999Z`) : undefined,

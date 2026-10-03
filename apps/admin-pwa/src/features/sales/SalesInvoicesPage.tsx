@@ -4,6 +4,7 @@ import PrintIcon from '@mui/icons-material/Print';
 import PublishIcon from '@mui/icons-material/Publish';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import {
   Alert,
   Chip,
@@ -124,35 +125,46 @@ export function SalesInvoicesPage(): JSX.Element {
   const availableBranches = (branches.data ?? []).filter((branch) => canChangeBranch || user?.branchIds.includes(branch.id));
   const [customerId, setCustomerId] = useState('');
   const [branchId, setBranchId] = useSessionBranchId();
-  useEffect(() => {
-    if (!canChangeBranch && user?.branchIds.length) {
-      setBranchId((current) => user.branchIds.includes(current) ? current : user.branchIds[0]!);
-    }
-  }, [canChangeBranch, user?.branchIds]);
   const [status, setStatus] = useState<SalesInvoiceStatus | ''>('');
   const [{ fromDate, toDate }, setDateRange] = useState(initialInvoiceDateRange);
+  const [appliedFilters, setAppliedFilters] = useState(() => ({
+    ...initialInvoiceDateRange(),
+    customerId: '',
+    branchId,
+    status: '' as SalesInvoiceStatus | '',
+  }));
+  useEffect(() => {
+    if (!canChangeBranch && user?.branchIds.length) {
+      const allowedBranch = user.branchIds.includes(branchId) ? branchId : user.branchIds[0]!;
+      setBranchId(allowedBranch);
+      setAppliedFilters((current) => ({ ...current, branchId: allowedBranch }));
+    }
+  }, [branchId, canChangeBranch, setBranchId, user?.branchIds]);
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(DATE_RANGE_SESSION_KEY, JSON.stringify({ fromDate, toDate }));
+      window.sessionStorage.setItem(DATE_RANGE_SESSION_KEY, JSON.stringify({
+        fromDate: appliedFilters.fromDate,
+        toDate: appliedFilters.toDate,
+      }));
     } catch {
       // Storage can be disabled; the filters still work until the page is refreshed.
     }
-  }, [fromDate, toDate]);
+  }, [appliedFilters.fromDate, appliedFilters.toDate]);
 
   const { data, isFetching } = useSalesInvoices(pagination.query, {
-    fromDate,
-    toDate,
-    customerId: customerId || undefined,
-    branchId: branchId || undefined,
-    status: status || undefined,
+    fromDate: appliedFilters.fromDate,
+    toDate: appliedFilters.toDate,
+    customerId: appliedFilters.customerId || undefined,
+    branchId: appliedFilters.branchId || undefined,
+    status: appliedFilters.status || undefined,
   });
   const exportParams = {
     search: pagination.query.search,
-    customerId: customerId || undefined,
-    branchId: branchId || undefined,
-    status: status || undefined,
-    fromDate: fromDate || undefined,
-    toDate: toDate || undefined,
+    customerId: appliedFilters.customerId || undefined,
+    branchId: appliedFilters.branchId || undefined,
+    status: appliedFilters.status || undefined,
+    fromDate: appliedFilters.fromDate || undefined,
+    toDate: appliedFilters.toDate || undefined,
   };
   const allInvoices = useQuery({
     queryKey: ['sales-invoices', 'totals', exportParams],
@@ -389,7 +401,6 @@ export function SalesInvoicesPage(): JSX.Element {
             value={fromDate}
             onChange={(e) => {
               setDateRange((current) => ({ ...current, fromDate: e.target.value }));
-              pagination.setPage(1);
             }}
             InputLabelProps={{ shrink: true }}
             inputProps={{ max: toDate || undefined }}
@@ -402,7 +413,6 @@ export function SalesInvoicesPage(): JSX.Element {
             value={toDate}
             onChange={(e) => {
               setDateRange((current) => ({ ...current, toDate: e.target.value }));
-              pagination.setPage(1);
             }}
             InputLabelProps={{ shrink: true }}
             inputProps={{ min: fromDate || undefined }}
@@ -416,7 +426,6 @@ export function SalesInvoicesPage(): JSX.Element {
             value={customerId}
             onChange={(e) => {
               setCustomerId(e.target.value);
-              pagination.setPage(1);
             }}
             sx={{ width: 200 }}
           >
@@ -436,7 +445,6 @@ export function SalesInvoicesPage(): JSX.Element {
             disabled={!canChangeBranch && availableBranches.length === 0}
             onChange={(e) => {
               setBranchId(e.target.value);
-              pagination.setPage(1);
             }}
             sx={{ width: 180 }}
           >
@@ -455,7 +463,6 @@ export function SalesInvoicesPage(): JSX.Element {
             value={status}
             onChange={(e) => {
               setStatus(e.target.value as SalesInvoiceStatus | '');
-              pagination.setPage(1);
             }}
             sx={{ width: 160 }}
           >
@@ -466,6 +473,16 @@ export function SalesInvoicesPage(): JSX.Element {
               </MenuItem>
             ))}
           </TextField>
+          <Button
+            variant="contained"
+            startIcon={<FilterAltIcon />}
+            onClick={() => {
+              setAppliedFilters({ fromDate, toDate, customerId, branchId, status });
+              pagination.setPage(1);
+            }}
+          >
+            Filter
+          </Button>
           <ListExportButtons<SalesInvoiceItem>
             path="/sales-invoices"
             params={exportParams}

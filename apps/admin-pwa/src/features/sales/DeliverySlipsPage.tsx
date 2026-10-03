@@ -61,12 +61,12 @@ export function DeliverySlipsPage(): JSX.Element {
     { field: 'totalBoxes', headerName: 'Boxes', maxWidth: 90 },
     { field: 'totalPieces', headerName: 'Pcs', maxWidth: 90 },
     {
-      headerName: 'Delivery slip',
+      headerName: 'Godown slip',
       maxWidth: 130,
       cellRenderer: (params: ICellRendererParams<DeliverySlipListItem>) => {
         if (!params.data || params.data.printed) return null;
         return (
-          <Tooltip title="View and print delivery slip">
+          <Tooltip title="View and print godown slip">
             <IconButton
               size="small"
               color="primary"
@@ -84,8 +84,10 @@ export function DeliverySlipsPage(): JSX.Element {
 
   return (
     <PageContainer
-      title="Delivery slips"
-      subtitle="Original delivery slips and assigned godown copies are each limited to one print."
+      title={user?.roles.includes('GODOWN STAFF') ? 'Godown slips' : 'Delivery slips'}
+      subtitle={user?.roles.includes('GODOWN STAFF')
+        ? 'Assigned godown slips are limited to one print per invoice and godown.'
+        : 'Original delivery slips are limited to one print per invoice.'}
     >
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
         <TextField

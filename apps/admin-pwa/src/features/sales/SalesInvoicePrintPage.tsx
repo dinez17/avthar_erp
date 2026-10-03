@@ -76,6 +76,7 @@ export function SalesInvoicePrintPage(): JSX.Element {
   const requestedDocument = searchParams.get('document');
   const deliveryGodownId = searchParams.get('godownId');
   const canPrintDeliverySlip = hasPermission(PERMISSIONS.DELIVERY_SLIP_PRINT);
+  const isGodownStaff = Boolean(user?.roles.includes('GODOWN STAFF'));
   const deliveryOnlyUser = Boolean(
     user?.roles.some((role) => role === 'GODOWN STAFF' || role === 'DELIVERY SLIP PRINT') &&
     !user.roles.some((role) => role !== 'GODOWN STAFF' && role !== 'DELIVERY SLIP PRINT'),
@@ -139,6 +140,11 @@ export function SalesInvoicePrintPage(): JSX.Element {
               : 'The delivery slip could not be printed.'}
           </Alert>
         )}
+        {documentType === 'delivery' && isGodownStaff && !deliveryGodownId && (
+          <Alert severity="warning" sx={{ mr: 1 }}>
+            Open the godown slip from the Godown slips list. A godown was not selected.
+          </Alert>
+        )}
         <Button
           color="inherit"
           startIcon={<ArrowBackIcon />}
@@ -192,13 +198,23 @@ export function SalesInvoicePrintPage(): JSX.Element {
         <Button
           variant="contained"
           startIcon={<PrintIcon />}
-          disabled={documentType === 'delivery' && (!canPrintDeliverySlip || deliveryPrinted || claimDeliveryPrint.isPending)}
+          disabled={documentType === 'delivery' && (
+            !canPrintDeliverySlip ||
+            deliveryPrinted ||
+            claimDeliveryPrint.isPending ||
+            (isGodownStaff && !deliveryGodownId)
+          )}
           onClick={() => {
             if (documentType !== 'delivery') {
               window.print();
               return;
             }
-            if (!id || deliveryPrinted || claimDeliveryPrint.isPending) return;
+            if (
+              !id ||
+              deliveryPrinted ||
+              claimDeliveryPrint.isPending ||
+              (isGodownStaff && !deliveryGodownId)
+            ) return;
 
             // Lock this page immediately. The API claim provides the permanent lock, so
             // returning to the invoice cannot obtain another copy from cached page data.

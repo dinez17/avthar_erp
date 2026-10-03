@@ -58,6 +58,25 @@ const STATUS_COLORS: Record<SalesInvoiceStatus, 'default' | 'success' | 'error'>
 };
 
 const STATUSES: SalesInvoiceStatus[] = ['DRAFT', 'POSTED', 'CANCELLED'];
+const DATE_RANGE_SESSION_KEY = 'tiles-erp:sales-invoices:date-range';
+
+const initialInvoiceDateRange = (): { fromDate: string; toDate: string } => {
+  const today = toDateInput(new Date());
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(DATE_RANGE_SESSION_KEY) ?? '{}') as {
+      fromDate?: unknown;
+      toDate?: unknown;
+    };
+    const valid = (value: unknown): value is string =>
+      typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+    return {
+      fromDate: valid(saved.fromDate) ? saved.fromDate : today,
+      toDate: valid(saved.toDate) ? saved.toDate : today,
+    };
+  } catch {
+    return { fromDate: today, toDate: today };
+  }
+};
 
 /** Invoice documents available from the row print action. */
 const PRINT_OPTIONS = [
@@ -111,8 +130,14 @@ export function SalesInvoicesPage(): JSX.Element {
     }
   }, [canChangeBranch, user?.branchIds]);
   const [status, setStatus] = useState<SalesInvoiceStatus | ''>('');
-  const [fromDate, setFromDate] = useState(() => toDateInput(new Date()));
-  const [toDate, setToDate] = useState(() => toDateInput(new Date()));
+  const [{ fromDate, toDate }, setDateRange] = useState(initialInvoiceDateRange);
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(DATE_RANGE_SESSION_KEY, JSON.stringify({ fromDate, toDate }));
+    } catch {
+      // Storage can be disabled; the filters still work until the page is refreshed.
+    }
+  }, [fromDate, toDate]);
 
   const { data, isFetching } = useSalesInvoices(pagination.query, {
     fromDate,
@@ -354,7 +379,10 @@ export function SalesInvoicesPage(): JSX.Element {
             type="date"
             size="small"
             value={fromDate}
-            onChange={(e) => { setFromDate(e.target.value); pagination.setPage(1); }}
+            onChange={(e) => {
+              setDateRange((current) => ({ ...current, fromDate: e.target.value }));
+              pagination.setPage(1);
+            }}
             InputLabelProps={{ shrink: true }}
             inputProps={{ max: toDate || undefined }}
             sx={{ width: { xs: '100%', sm: 165 } }}
@@ -364,7 +392,10 @@ export function SalesInvoicesPage(): JSX.Element {
             type="date"
             size="small"
             value={toDate}
-            onChange={(e) => { setToDate(e.target.value); pagination.setPage(1); }}
+            onChange={(e) => {
+              setDateRange((current) => ({ ...current, toDate: e.target.value }));
+              pagination.setPage(1);
+            }}
             InputLabelProps={{ shrink: true }}
             inputProps={{ min: fromDate || undefined }}
             sx={{ width: { xs: '100%', sm: 165 } }}
